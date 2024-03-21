@@ -2,13 +2,13 @@
 name = "tav"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT"
+description = "Terminal anti-virus"
 
 [dependencies]
 notify = "6.1.1"
 regex = "1.10.3"
-reqwest = { version = "0.11", features = ["blocking"] }
+reqwest = { version = "0.12", features = ["blocking"] }
 sysinfo = "0.30.7"
 walkdir = "2.5.0"
 serde = { version = "1.0", features = ["derive"] }
