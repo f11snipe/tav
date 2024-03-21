@@ -1,0 +1,20 @@
+fs:
+  watch:
+    - /tmp/watchme
+    - ./tmp
+  blacklist:
+    - poo.*
+    - abc[0-9]+
+    - file1
+    - badfileagain
+    - anotherpath
+    - dontletmelive
+ps:
+  blacklist:
+    - malwareps
+    - killthisproc
+
+extra:
+  new:
+    - other
+    - stuff
