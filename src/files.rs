@@ -34,8 +34,6 @@ pub fn walk<P: AsRef<Path>>(path: P, blacklist_files: &Vec<String>) -> Result<()
 }
 
 pub fn watch<P: AsRef<Path>>(path: P, blacklist_files: &Vec<String>) -> notify::Result<()> {
-    println!("WATCH WITH BLACKLIST: {:?}", blacklist_files);
-
     let (tx, rx) = std::sync::mpsc::channel();
 
     // Automatically select the best implementation for your platform.
