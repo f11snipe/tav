@@ -3,16 +3,19 @@ fs:
     - /tmp/watchme
     - ./tmp
   blacklist:
-    - poo.*
-    - abc[0-9]+
-    - file1
-    - badfileagain
-    - anotherpath
+    - badfile.*
+    - deleteme[0-9]+
     - dontletmelive
 ps:
+  watch:
+    - sketchy
   blacklist:
     - malwareps
     - killthisproc
+  prohibit:
+    www-data:
+      - /bin/sh
+      - /bin/bash
 
 extra:
   new:
