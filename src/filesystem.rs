@@ -1,8 +1,37 @@
 use std::fs;
+use std::thread;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, Config};
 use std::path::Path;
 use walkdir::WalkDir;
 use regex::Regex;
+
+pub fn handle(watchlist: &Vec<String>, blacklist: &Vec<String>, handles: &mut Vec<thread::JoinHandle<()>>) {
+    for d in watchlist {
+        let d1 = d.clone();
+        let l1 = blacklist.clone();
+        let h1 = thread::spawn(move || {
+            println!("walking: {}", &d1);
+            if let Err(e) = walk(&d1, &l1) {
+                println!("error: {:?}", e);
+            } else {
+                println!("done walking: {}", &d1);
+            }
+        });
+
+        handles.push(h1);
+
+        let d2 = d.clone();
+        let l2 = blacklist.clone();
+        let h2 = thread::spawn(move || {
+            println!("watching: {}", &d2);
+            if let Err(e) = watch(&d2, &l2) {
+                println!("error: {:?}", e);
+            }
+        });
+
+        handles.push(h2);
+    }
+}
 
 fn compare_fs(subject: &str, blacklisted: &String) -> bool {
     // let re = format!("(?m){}", blacklisted).as_str();
