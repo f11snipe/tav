@@ -1,7 +1,5 @@
-use tav::run;
+use tav::cli;
 
-fn main() -> Result<(), serde_yaml::Error> {
-    run("conf/config.yaml")?;
-
-    Ok(())
+fn main() {
+    cli::run();
 }
