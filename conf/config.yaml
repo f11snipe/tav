@@ -1,23 +1,27 @@
+# Filesystem options
 fs:
+  # List of directories to walk & watch
   watch:
     - /tmp/watchme
     - ./tmp
+  # Blacklist files (supports simple regex)
   blacklist:
     - badfile.*
     - deleteme[0-9]+
     - dontletmelive
+# Process options
 ps:
+  # Watch for processes (no action)
   watch:
     - sketchy
+  # Blacklist processes (supports simple regex)
   blacklist:
     - malwareps
     - killthisproc
+    - badprefix.*
+  # Blacklist processes for specific users
   prohibit:
+    # Don't allow www-data user to run sh or bash processes
     www-data:
       - /bin/sh
       - /bin/bash
-
-extra:
-  new:
-    - other
-    - stuff
