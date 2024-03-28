@@ -10,6 +10,12 @@ use serde::{Serialize, Deserialize};
 pub mod filesystem;
 pub mod processes;
 
+pub mod cli;
+pub mod cmd;
+pub mod data;
+pub use data::CmdExit;
+
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConfigGroup {
     pub watch: Option<Vec<String>>,
@@ -21,6 +27,17 @@ pub struct ConfigGroup {
 pub struct ConfigData {
     pub fs: ConfigGroup,
     pub ps: ConfigGroup,
+}
+
+pub fn config(config_file: &str) -> Result<(), serde_yaml::Error> {
+    let file = File::open(config_file).expect("Missing config file");
+    let buf_reader = BufReader::new(file);
+    let config: ConfigData = serde_yaml::from_reader(buf_reader)?;
+
+    println!("Loaded Config: {:?}", config_file);
+    dbg!(config);
+
+    Ok(())
 }
 
 pub fn run(config_file: &str) -> Result<(), serde_yaml::Error> {
