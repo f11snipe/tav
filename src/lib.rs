@@ -9,6 +9,7 @@ use serde::{Serialize, Deserialize};
 
 pub mod filesystem;
 pub mod processes;
+pub mod system;
 
 pub mod cli;
 pub mod cmd;

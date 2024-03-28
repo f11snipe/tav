@@ -4,6 +4,7 @@ pub fn run() {
     let app = cmd::default::command()
         .subcommand(cmd::run::command())
         .subcommand(cmd::config::command())
+        .subcommand(cmd::system::command())
         .subcommand(cmd::ping::command());
 
     let v = app.render_version();
@@ -19,6 +20,7 @@ pub fn run() {
         |tup| match tup {
             ("run", subcommand_matches) => cmd::run::run(&matches, subcommand_matches),
             ("config", subcommand_matches) => cmd::config::run(&matches, subcommand_matches),
+            ("system", subcommand_matches) => cmd::system::run(&matches, subcommand_matches),
             ("ping", subcommand_matches) => cmd::ping::run(&matches, subcommand_matches),
             _ => unreachable!(),
         },
