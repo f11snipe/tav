@@ -5,7 +5,9 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::collections::HashMap;
+use regex::Regex;
 use serde::{Serialize, Deserialize};
+use tracing::info;
 
 pub mod filesystem;
 pub mod processes;
@@ -27,6 +29,15 @@ pub struct ConfigGroup {
 pub struct ConfigData {
     pub fs: ConfigGroup,
     pub ps: ConfigGroup,
+}
+
+pub fn compare_regex(subject: &str, blacklisted: &String) -> bool {
+    let re = Regex::new(format!("(?mi){}", blacklisted).as_str()).unwrap();
+    let Some(_) = re.captures(subject) else {
+        return false;
+    };
+    info!("Found match for: '{}' ({})", blacklisted, subject);
+    return true;
 }
 
 pub fn config(config_file: &str) -> Result<(), serde_yaml::Error> {

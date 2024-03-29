@@ -4,7 +4,7 @@ fs:
   watch:
     - /tmp/watchme
     - ./tmp
-  # Blacklist files (supports simple regex)
+  # Blacklist files (simple case insensitive regex)
   blacklist:
     - badfile.*
     - deleteme[0-9]+
@@ -14,11 +14,10 @@ ps:
   # Watch for processes (no action)
   watch:
     - sketchy
-  # Blacklist processes (supports simple regex)
+  # Blacklist processes (partial case insensitive compare)
   blacklist:
     - malwareps
     - killthisproc
-    - badprefix.*
   # Blacklist processes for specific users
   prohibit:
     # Don't allow www-data user to run sh or bash processes

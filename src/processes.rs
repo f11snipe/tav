@@ -88,10 +88,11 @@ pub fn ps_log(process: &Process, prefix: &str) {
     }
 }
 
-pub fn ps_match(process: &Process, subject: &String) -> bool {
-    let cmd = process.cmd().join(" ");
-    let exe = process.exe().unwrap_or_else(|| Path::new("")).to_str().unwrap_or_else(|| "");
-    let name = process.name();
+pub fn ps_match(process: &Process, blacklisted: &String) -> bool {
+    let cmd = process.cmd().join(" ").to_lowercase();
+    let exe = process.exe().unwrap_or_else(|| Path::new("")).to_str().unwrap_or_else(|| "").to_lowercase();
+    let name = process.name().to_lowercase();
+    let search = blacklisted.to_lowercase();
 
-    return cmd.contains(subject) || exe.contains(subject) || name.contains(subject);
+    return cmd.contains(&search) || exe.contains(&search) || name.contains(&search);
 }

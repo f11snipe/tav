@@ -40,7 +40,7 @@ fs:
     - /tmp
     - /var/tmp
     - /var/www
-  # Blacklist files (supports simple regex)
+  # Blacklist files (simple case insensitive regex)
   blacklist:
     - badfile.*
     - deleteme[0-9]+
@@ -51,11 +51,10 @@ ps:
   watch:
     - python
     - sketchy
-  # Blacklist processes (supports simple regex)
+  # Blacklist processes (partial case insensitive compare)
   blacklist:
     - malwareps
     - killthisproc
-    - badprefix.*
   # Blacklist processes for specific users
   prohibit:
     # Don't allow www-data user to run sh or bash processes
