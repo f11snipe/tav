@@ -3,7 +3,8 @@ use std::thread;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, Config};
 use std::path::Path;
 use walkdir::WalkDir;
-use regex::Regex;
+use crate::compare_regex;
+
 
 pub fn handle(watchlist: &Vec<String>, blacklist: &Vec<String>, handles: &mut Vec<thread::JoinHandle<()>>) {
     for d in watchlist {
@@ -33,23 +34,11 @@ pub fn handle(watchlist: &Vec<String>, blacklist: &Vec<String>, handles: &mut Ve
     }
 }
 
-fn compare_fs(subject: &str, blacklisted: &String) -> bool {
-    // let re = format!("(?m){}", blacklisted).as_str();
-    let re = Regex::new(format!("(?m){}", blacklisted).as_str()).unwrap();
-    // println!("{:?}", re);
-    let Some(_) = re.captures(subject) else {
-        // println!("no match! '{}' ({})", blacklisted, subject);
-        return false;
-    };
-    println!("Found match for: '{}' ({})", blacklisted, subject);
-    return true;
-}
-
 pub fn walk<P: AsRef<Path>>(path: P, blacklist_files: &Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
         // println!("{}", entry.path().display());
         for val in blacklist_files {
-            if compare_fs(entry.path().to_str().unwrap(), val) {
+            if compare_regex(entry.path().to_str().unwrap(), val) {
             // if entry.path().display().to_string().contains(val) {
                 println!("DELETE: {}", entry.path().display());
                 if entry.path().is_file() {
@@ -84,7 +73,7 @@ pub fn watch<P: AsRef<Path>>(path: P, blacklist_files: &Vec<String>) -> notify::
                             match pp.to_str() {
                                 Some(nn) => {
                                     for val in blacklist_files {
-                                        if compare_fs(nn, val) {
+                                        if compare_regex(nn, val) {
                                             println!("DELETE: {}", nn);
                                             if pp.is_file() {
                                                 let _ = fs::remove_file(&pp);
