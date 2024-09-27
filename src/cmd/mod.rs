@@ -2,6 +2,7 @@ pub mod default;
 pub mod config;
 pub mod ping;
 pub mod run;
+pub mod system;
 use std::process::exit;
 
 use anyhow::Result;
