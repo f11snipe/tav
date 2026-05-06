@@ -4,7 +4,7 @@ use crate::CmdExit;
 
 pub fn command() -> Command {
     Command::new("config")
-        .about("Config test")
+        .about("Parse and display the config file (for validation)")
         .arg(
             Arg::new("config")
                 .short('c')
@@ -20,10 +20,9 @@ pub fn run(
     _subcommand_matches: &ArgMatches,
 ) -> Result<CmdExit> {
     let config_file = _subcommand_matches.get_one::<String>("config").unwrap();
-    println!("Running with config: {}", config_file);
     crate::config_display(config_file)?;
     Ok(CmdExit {
         code: exitcode::OK,
-        message: Some("Goodbye".to_string()),
+        message: None,
     })
 }

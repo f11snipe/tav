@@ -4,7 +4,7 @@ use crate::CmdExit;
 
 pub fn command() -> Command {
     Command::new("run")
-        .about("Run active scanner and watcher")
+        .about("Run all monitors in the foreground (Ctrl-C to stop)")
         .arg(
             Arg::new("config")
                 .short('c')
@@ -20,7 +20,6 @@ pub fn run(
     subcommand_matches: &ArgMatches,
 ) -> Result<CmdExit> {
     let config_file = subcommand_matches.get_one::<String>("config").unwrap();
-    println!("Running with config: {}", config_file);
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -29,6 +28,6 @@ pub fn run(
 
     Ok(CmdExit {
         code: exitcode::OK,
-        message: Some("Goodbye".to_string()),
+        message: None,
     })
 }

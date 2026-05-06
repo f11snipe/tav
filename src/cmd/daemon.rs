@@ -5,20 +5,22 @@ use crate::config::Config;
 
 pub fn command() -> Command {
     Command::new("daemon")
-        .about("Manage the tav daemon process")
+        .about("Manage the background daemon (Unix only)")
         .subcommand(
             Command::new("start")
-                .about("Start tav daemon in the background")
+                .about("Fork to background, write PID to ~/.tav/tav.pid")
                 .arg(
                     Arg::new("config")
                         .short('c')
                         .long("config")
+                        .help("Path to config file (yaml)")
+                        .value_name("FILE")
                         .default_value("conf/config.yaml"),
                 ),
         )
-        .subcommand(Command::new("stop").about("Stop the running daemon"))
-        .subcommand(Command::new("status").about("Show daemon status"))
-        .subcommand(Command::new("reload").about("Reload daemon configuration"))
+        .subcommand(Command::new("stop").about("Send SIGTERM to the running daemon"))
+        .subcommand(Command::new("status").about("Show daemon PID and uptime via IPC socket"))
+        .subcommand(Command::new("reload").about("Hot-reload config without restarting (SIGHUP fallback)"))
 }
 
 pub fn run(_matches: &ArgMatches, sub: &ArgMatches) -> Result<CmdExit> {
