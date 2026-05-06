@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod kill;
 pub mod quarantine;
+pub mod watch_only;
 
 use anyhow::Result;
 use async_trait::async_trait;

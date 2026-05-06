@@ -7,7 +7,9 @@ use anyhow::Result;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+pub mod util;
 pub mod config;
+pub mod intel;
 pub mod engine;
 pub mod monitors;
 pub mod detectors;
@@ -33,8 +35,10 @@ pub fn config_display(config_file: &str) -> Result<(), serde_yaml::Error> {
 pub async fn run_async(config_file: &Path) -> Result<()> {
     use config::loader::{load_shared, watch_config};
     use engine::Engine;
+    use std::sync::Arc;
+    use detectors::{HashChecker, ScriptDetector};
     use monitors::{filesystem::FilesystemMonitor, processes::ProcessMonitor};
-    use actions::{audit::AuditAction, kill::KillAction, quarantine::QuarantineAction};
+    use actions::{audit::AuditAction, kill::KillAction, quarantine::QuarantineAction, watch_only::WatchOnlyAction};
 
     let shared = load_shared(config_file).await?;
     let (changed_tx, changed_rx) = watch::channel(());
@@ -48,11 +52,34 @@ pub async fn run_async(config_file: &Path) -> Result<()> {
         changed_tx,
     ));
 
+    // Build hash checker from intel DB (empty if DB doesn't exist yet)
+    let db_path = config::Config::intel_db_path();
+    let hash_checker = if db_path.exists() {
+        let db = tokio::task::spawn_blocking(move || intel::IntelDb::open(&db_path)).await??;
+        let bl = db.load_blocklist()?;
+        let al = db.load_allowlist()?;
+        Arc::new(HashChecker::new(bl, al))
+    } else {
+        Arc::new(HashChecker::empty())
+    };
+
+    // Build script detector from config
+    let script_detector = {
+        let cfg = shared.read().await;
+        if cfg.scripts.enabled {
+            Arc::new(ScriptDetector::from_config(&cfg.scripts.patterns, &cfg.scripts.extensions)
+                .unwrap_or_else(|_| ScriptDetector::empty()))
+        } else {
+            Arc::new(ScriptDetector::empty())
+        }
+    };
+
     Engine::new(shared, changed_rx)
-        .add_monitor(FilesystemMonitor)
+        .add_monitor(FilesystemMonitor::new(hash_checker, script_detector))
         .add_monitor(ProcessMonitor)
         .add_action(QuarantineAction)
         .add_action(KillAction)
+        .add_action(WatchOnlyAction)
         .add_action(AuditAction)
         .run()
         .await

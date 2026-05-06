@@ -6,7 +6,8 @@ pub fn run() {
         .subcommand(cmd::config::command())
         .subcommand(cmd::ping::command())
         .subcommand(cmd::quarantine::command())
-        .subcommand(cmd::audit::command());
+        .subcommand(cmd::audit::command())
+        .subcommand(cmd::intel::command());
 
     let v = app.render_version();
     let matches = app.get_matches();
@@ -22,6 +23,7 @@ pub fn run() {
             ("ping",       m) => cmd::ping::run(&matches, m),
             ("quarantine", m) => cmd::quarantine::run(&matches, m),
             ("audit",      m) => cmd::audit::run(&matches, m),
+            ("intel",      m) => cmd::intel::run(&matches, m),
             _ => unreachable!(),
         },
     );

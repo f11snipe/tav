@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod config;
 pub mod default;
+pub mod intel;
 pub mod ping;
 pub mod quarantine;
 pub mod run;

@@ -18,6 +18,12 @@ pub struct Config {
 
     #[serde(default)]
     pub policies: HashMap<String, PolicyDef>,
+
+    #[serde(default)]
+    pub hashes: HashConfig,
+
+    #[serde(default)]
+    pub scripts: ScriptConfig,
 }
 
 /// Optional `tav:` top-level section.
@@ -31,14 +37,19 @@ pub struct GlobalConfig {
 
     #[serde(default = "default_poll_ms")]
     pub poll_interval_ms: u64,
+
+    /// Suppress duplicate events for the same file/process within this window.
+    #[serde(default = "default_dedup_ttl")]
+    pub dedup_ttl_secs: u64,
 }
 
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
-            quarantine_dir: default_quarantine_dir(),
-            audit_log: default_audit_log(),
+            quarantine_dir:  default_quarantine_dir(),
+            audit_log:       default_audit_log(),
             poll_interval_ms: default_poll_ms(),
+            dedup_ttl_secs:  default_dedup_ttl(),
         }
     }
 }
@@ -46,6 +57,7 @@ impl Default for GlobalConfig {
 fn default_quarantine_dir() -> String { "~/.tav/quarantine".into() }
 fn default_audit_log()      -> String { "~/.tav/audit.jsonl".into() }
 fn default_poll_ms()         -> u64   { 500 }
+fn default_dedup_ttl()       -> u64   { 30 }
 
 /// Replaces the old `ConfigGroup`. YAML keys (`watch`, `blacklist`, `prohibit`)
 /// are unchanged — new fields are optional with sensible defaults.
@@ -133,7 +145,83 @@ impl Config {
                 .unwrap_or("~/.tav/audit.jsonl"),
         )
     }
+
+    pub fn intel_db_path() -> PathBuf {
+        Self::expand_path("~/.tav/intel/hashes.db")
+    }
 }
+
+// ─── Hash checking config ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct HashConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Path to a flat-file import list (one sha256 hex per line).
+    pub blocklist: Option<String>,
+    pub allowlist: Option<String>,
+
+    #[serde(default)]
+    pub virustotal: VirusTotalConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct VirusTotalConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub api_key: Option<String>,
+    #[serde(default = "default_vt_threshold")]
+    pub threshold: u32,
+}
+fn default_vt_threshold() -> u32 { 3 }
+
+// ─── Script content scanning config ─────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScriptConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    #[serde(default = "default_max_script_bytes")]
+    pub max_file_size_bytes: u64,
+
+    #[serde(default = "default_script_extensions")]
+    pub extensions: Vec<String>,
+
+    #[serde(default)]
+    pub patterns: Vec<ScriptPattern>,
+
+    pub policy: Option<String>,
+}
+
+impl Default for ScriptConfig {
+    fn default() -> Self {
+        Self {
+            enabled:             false,
+            max_file_size_bytes: default_max_script_bytes(),
+            extensions:          default_script_extensions(),
+            patterns:            Vec::new(),
+            policy:              None,
+        }
+    }
+}
+
+fn default_max_script_bytes() -> u64 { 10 * 1024 * 1024 } // 10 MiB
+fn default_script_extensions() -> Vec<String> {
+    ["sh", "py", "ps1", "js", "rb", "php", "pl"]
+        .iter().map(|s| s.to_string()).collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScriptPattern {
+    pub name:     String,
+    pub regex:    String,
+    /// "info" | "low" | "medium" | "high" | "critical" — parsed by ScriptDetector
+    #[serde(default = "default_severity_str")]
+    pub severity: String,
+}
+fn default_severity_str() -> String { "medium".into() }
 
 #[cfg(test)]
 mod tests {

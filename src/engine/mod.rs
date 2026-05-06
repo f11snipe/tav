@@ -98,11 +98,11 @@ async fn dispatch_actions(
     config:  &Arc<RwLock<Config>>,
 ) {
     let cfg = config.read().await;
+    // filesystem/hash and filesystem/script sub-monitors share the fs: policy
     let monitor_cfg = match event.monitor.as_str() {
-        "filesystem" => &cfg.fs,
+        "filesystem" | "filesystem/hash" | "filesystem/script" => &cfg.fs,
         "processes"  => &cfg.ps,
         _            => {
-            // Unknown monitor: alert only
             run_alert_action(event, actions, &cfg).await;
             return;
         }
@@ -134,8 +134,10 @@ async fn run_alert_action(
 
 fn default_policy_for(monitor: &str) -> Vec<ActionName> {
     match monitor {
-        "filesystem" => vec![ActionName::Quarantine, ActionName::Alert],
-        "processes"  => vec![ActionName::Kill, ActionName::Alert],
-        _            => vec![ActionName::Alert],
+        "filesystem" | "filesystem/hash" | "filesystem/script"
+            => vec![ActionName::Quarantine, ActionName::Alert],
+        "processes"
+            => vec![ActionName::Kill, ActionName::Alert],
+        _   => vec![ActionName::Alert],
     }
 }

@@ -3,10 +3,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use crate::config::{ActionName, Config};
 use crate::engine::event::{Subject, ThreatEvent};
+use crate::util::stream_sha256;
 use super::ActionHandler;
 
 /// Metadata written alongside each quarantined file as `<UUID>.meta.json`.
@@ -39,8 +39,7 @@ impl ActionHandler for QuarantineAction {
         let qdir = config.quarantine_dir();
         tokio::fs::create_dir_all(&qdir).await?;
 
-        let bytes = tokio::fs::read(&path).await?;
-        let sha256 = hex::encode(Sha256::digest(&bytes));
+        let sha256 = stream_sha256(&path).await.unwrap_or_default();
 
         let qid   = Uuid::new_v4();
         let qfile = qdir.join(qid.to_string());
