@@ -70,6 +70,9 @@ pub struct Config {
 
     #[serde(default)]
     pub intel: IntelConfig,
+
+    #[serde(default)]
+    pub pcap: PcapConfig,
 }
 
 // ── Global settings ───────────────────────────────────────────────────────────
@@ -428,6 +431,78 @@ pub struct FeedConfig {
 }
 
 fn default_true() -> bool { true }
+
+// ── Live PCAP monitor (feature = "pcap", requires root) ───────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PcapConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Network interface to capture on. Use "any" to pick the default.
+    #[serde(default = "default_pcap_interface")]
+    pub interface: String,
+
+    /// BPF filter string applied to the capture (empty = capture all).
+    #[serde(default)]
+    pub bpf_filter: String,
+
+    /// Overrides the global default policy for PCAP threat events.
+    #[serde(default)]
+    pub policy: Option<PolicyRef>,
+
+    #[serde(default)]
+    pub detectors: PcapDetectors,
+}
+
+impl Default for PcapConfig {
+    fn default() -> Self {
+        Self {
+            enabled:    false,
+            interface:  default_pcap_interface(),
+            bpf_filter: String::new(),
+            policy:     None,
+            detectors:  PcapDetectors::default(),
+        }
+    }
+}
+
+fn default_pcap_interface() -> String { "any".into() }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PcapDetectors {
+    /// Alert on DNS queries for blocked or suspicious domains.
+    #[serde(default = "default_true")]
+    pub dns_queries: bool,
+
+    /// Extract HTTP Host headers and check against intel.
+    #[serde(default = "default_true")]
+    pub http_hosts: bool,
+
+    /// Extract TLS SNI from ClientHello and check against intel.
+    #[serde(default = "default_true")]
+    pub tls_sni: bool,
+
+    /// Detect regular-interval (beaconing) connections to a single destination.
+    #[serde(default)]
+    pub beaconing: bool,
+
+    /// Detect SYN-flood port scan patterns from a single source.
+    #[serde(default)]
+    pub port_scans: bool,
+}
+
+impl Default for PcapDetectors {
+    fn default() -> Self {
+        Self {
+            dns_queries: true,
+            http_hosts:  true,
+            tls_sni:     true,
+            beaconing:   false,
+            port_scans:  false,
+        }
+    }
+}
 
 // ── Config helpers ────────────────────────────────────────────────────────────
 

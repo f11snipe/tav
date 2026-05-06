@@ -136,6 +136,20 @@ intel:
       feed_type: domain
       enabled:   false
 
+# ── Live PCAP monitor (requires `--features pcap` build + root) ───────────────
+pcap:
+  enabled: false
+  interface: any            # "any" picks the default device; or e.g. "en0", "eth0"
+  bpf_filter: ""            # BPF expression applied to capture; empty = all packets
+  # policy: notify_only     # overrides global default for all pcap events
+
+  detectors:
+    dns_queries: true       # alert on DNS queries for blocked domains
+    http_hosts:  true       # extract HTTP Host header, check against intel
+    tls_sni:     true       # extract TLS SNI from ClientHello, check against intel
+    beaconing:   false      # detect regular-interval C2 connections
+    port_scans:  false      # detect SYN-only port sweeps
+
 # ── DNS monitor (passive) ──────────────────────────────────────────────────────
 dns:
   enabled: false

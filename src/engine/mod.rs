@@ -135,6 +135,15 @@ fn resolve_policy(cfg: &Config, monitor: &str) -> Vec<ActionName> {
         "network/dns" => {
             cfg.resolve_policy(cfg.dns.policy.as_ref(), &default)
         }
+        "network/pcap"
+        | "network/pcap/dns"
+        | "network/pcap/tls"
+        | "network/pcap/http"
+        | "network/pcap/intel"
+        | "network/pcap/beacon"
+        | "network/pcap/portscan" => {
+            cfg.resolve_policy(cfg.pcap.policy.as_ref(), &default)
+        }
         _ => default,
     }
 }
@@ -146,6 +155,9 @@ fn default_policy_for(monitor: &str) -> Vec<ActionName> {
         "processes"
             => vec![ActionName::Kill, ActionName::Alert],
         "network/ports" | "network/dns"
+        | "network/pcap"
+        | "network/pcap/dns" | "network/pcap/tls" | "network/pcap/http"
+        | "network/pcap/intel" | "network/pcap/beacon" | "network/pcap/portscan"
             => vec![ActionName::Alert],
         _   => vec![ActionName::Alert],
     }

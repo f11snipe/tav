@@ -44,6 +44,8 @@ pub async fn run_async(config_file: &Path) -> Result<()> {
         ports::PortMonitor,
         dns::DnsMonitor,
     };
+    #[cfg(feature = "pcap")]
+    use monitors::pcap::PcapMonitor;
     use actions::{audit::AuditAction, kill::KillAction, quarantine::QuarantineAction, watch_only::WatchOnlyAction};
 
     let shared = load_shared(config_file).await?;
@@ -102,7 +104,18 @@ pub async fn run_async(config_file: &Path) -> Result<()> {
     #[cfg(not(feature = "yara"))]
     let yara_detector: Option<Arc<dyn ContentDetector>> = None;
 
-    Engine::new(shared, changed_rx)
+    // Build PCAP monitor if the feature is compiled in and enabled in config.
+    #[cfg(feature = "pcap")]
+    let pcap_monitor = {
+        let cfg = shared.read().await;
+        if cfg.pcap.enabled {
+            Some(PcapMonitor::new(blocked_domains.clone(), blocked_ips.clone()))
+        } else {
+            None
+        }
+    };
+
+    let engine = Engine::new(shared, changed_rx)
         .add_monitor(FilesystemMonitor::new(hash_checker, script_detector, yara_detector))
         .add_monitor(ProcessMonitor)
         .add_monitor(PortMonitor::new(blocked_ips))
@@ -110,7 +123,14 @@ pub async fn run_async(config_file: &Path) -> Result<()> {
         .add_action(QuarantineAction)
         .add_action(KillAction)
         .add_action(WatchOnlyAction)
-        .add_action(AuditAction)
-        .run()
-        .await
+        .add_action(AuditAction);
+
+    #[cfg(feature = "pcap")]
+    let engine = if let Some(pm) = pcap_monitor {
+        engine.add_monitor(pm)
+    } else {
+        engine
+    };
+
+    engine.run().await
 }

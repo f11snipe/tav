@@ -3,6 +3,9 @@ pub mod processes;
 pub mod ports;
 pub mod dns;
 
+#[cfg(feature = "pcap")]
+pub mod pcap;
+
 use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
