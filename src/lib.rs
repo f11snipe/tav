@@ -35,9 +35,15 @@ pub fn config_display(config_file: &str) -> Result<(), serde_yaml::Error> {
 pub async fn run_async(config_file: &Path) -> Result<()> {
     use config::loader::{load_shared, watch_config};
     use engine::Engine;
+    use std::collections::HashSet;
     use std::sync::Arc;
     use detectors::{HashChecker, ScriptDetector};
-    use monitors::{filesystem::FilesystemMonitor, processes::ProcessMonitor};
+    use monitors::{
+        filesystem::FilesystemMonitor,
+        processes::ProcessMonitor,
+        ports::PortMonitor,
+        dns::DnsMonitor,
+    };
     use actions::{audit::AuditAction, kill::KillAction, quarantine::QuarantineAction, watch_only::WatchOnlyAction};
 
     let shared = load_shared(config_file).await?;
@@ -52,15 +58,16 @@ pub async fn run_async(config_file: &Path) -> Result<()> {
         changed_tx,
     ));
 
-    // Build hash checker from intel DB (empty if DB doesn't exist yet)
+    // Load intel DB once; build hash checker and domain blocklist together.
     let db_path = config::Config::intel_db_path();
-    let hash_checker = if db_path.exists() {
+    let (hash_checker, blocked_domains) = if db_path.exists() {
         let db = tokio::task::spawn_blocking(move || intel::IntelDb::open(&db_path)).await??;
-        let bl = db.load_blocklist()?;
-        let al = db.load_allowlist()?;
-        Arc::new(HashChecker::new(bl, al))
+        let bl      = db.load_blocklist()?;
+        let al      = db.load_allowlist()?;
+        let domains = db.load_blocked_domains()?;
+        (Arc::new(HashChecker::new(bl, al)), Arc::new(domains))
     } else {
-        Arc::new(HashChecker::empty())
+        (Arc::new(HashChecker::empty()), Arc::new(HashSet::new()))
     };
 
     // Build script detector from config
@@ -77,6 +84,8 @@ pub async fn run_async(config_file: &Path) -> Result<()> {
     Engine::new(shared, changed_rx)
         .add_monitor(FilesystemMonitor::new(hash_checker, script_detector))
         .add_monitor(ProcessMonitor)
+        .add_monitor(PortMonitor)
+        .add_monitor(DnsMonitor::new(blocked_domains))
         .add_action(QuarantineAction)
         .add_action(KillAction)
         .add_action(WatchOnlyAction)

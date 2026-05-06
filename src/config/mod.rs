@@ -24,6 +24,12 @@ pub struct Config {
 
     #[serde(default)]
     pub scripts: ScriptConfig,
+
+    #[serde(default)]
+    pub network: NetworkTopConfig,
+
+    #[serde(default)]
+    pub dns: DnsConfig,
 }
 
 /// Optional `tav:` top-level section.
@@ -175,6 +181,84 @@ pub struct VirusTotalConfig {
     pub threshold: u32,
 }
 fn default_vt_threshold() -> u32 { 3 }
+
+// ─── Network port watching config ────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct NetworkTopConfig {
+    #[serde(default)]
+    pub ports: PortConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PortConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Ports that are always expected to be listening; anything else triggers an alert.
+    /// Empty list disables the unexpected-listener check.
+    #[serde(default)]
+    pub expected_listeners: Vec<u16>,
+
+    /// CIDR ranges (e.g. "10.0.0.0/8") that are blocked as connection destinations.
+    #[serde(default)]
+    pub blocked_destinations: Vec<String>,
+
+    /// Per-process port rules.
+    #[serde(default)]
+    pub monitor_processes: Vec<ProcessPortRule>,
+
+    pub policy: Option<String>,
+
+    #[serde(default)]
+    pub poll_interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProcessPortRule {
+    /// Substring matched against the process command name.
+    pub name: String,
+    /// "any_listen" | "any_connect"
+    pub alert_on: String,
+}
+
+// ─── DNS monitoring config ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DnsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// "passive" (watch /etc/hosts) — only mode currently implemented.
+    #[serde(default = "default_dns_mode")]
+    pub mode: String,
+
+    pub policy: Option<String>,
+
+    /// Regex alert patterns applied to domains found in /etc/hosts.
+    #[serde(default)]
+    pub alerts: Vec<DnsAlertPattern>,
+}
+
+impl Default for DnsConfig {
+    fn default() -> Self {
+        Self {
+            enabled:  false,
+            mode:     default_dns_mode(),
+            policy:   None,
+            alerts:   Vec::new(),
+        }
+    }
+}
+
+fn default_dns_mode() -> String { "passive".into() }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DnsAlertPattern {
+    pub pattern: String,
+    #[serde(default = "default_severity_str")]
+    pub severity: String,
+}
 
 // ─── Script content scanning config ─────────────────────────────────────────
 

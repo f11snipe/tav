@@ -1,0 +1,478 @@
+❯ starting a new rust project for a light-weight cli based "terminal anti-virus". already has some basic setup and config options to watch and/or block entries found in filesystem or process list. review the current codebase, and help propose a large
+  long-term refactor to further optimze and add new features like "port watching" or even eventually "live network pcap watching (like wireshark)", consider other features that would be useful for a standard AV application like known bad hashes, bad
+  scripts, partial matches or patterns, dns/domain watch/filter, etc
+
+⏺ Explore(Explore tav codebase structure)
+  ⎿  Done (23 tool uses · 30.7k tokens · 1m 12s)
+  (ctrl+o to expand)
+
+⏺ Good overview from the exploration. Let me put together a comprehensive proposal.
+
+  Read 4 files (ctrl+o to expand)
+
+⏺ Good picture of the codebase. Here's the full proposal:
+
+  ---
+  TAV Long-Term Refactor & Feature Roadmap
+
+  Current State Assessment
+
+  The codebase has a solid foundation but several structural issues that will block growth:
+
+  - Raw thread::spawn everywhere — no cancellation, no resource budgets, hard to compose
+  - Flat config (fs/ps only) — adding new monitor types means touching lib.rs core
+  - Hardcoded actions — delete files, kill processes; no configurable policy
+  - No central event system — each monitor is a silo, no shared state or alerting
+  - Inconsistent matching — regex for FS, plain substring for PS
+  - Regex compiled per-match — Regex::new() inside compare_regex() on every call
+  - Silent failures — let _ = fs::remove_file(), ps_log allocates new Users on every invocation
+  - Irreversible actions — deletes files immediately (no quarantine, no undo)
+  - No persistence — no audit trail, no history, no state between runs
+  - Unused dep — reqwest is in Cargo.toml but not called anywhere
+
+  ---
+  Phase 1 — Architecture Foundation (refactor only, no new features)
+
+  This phase is about fixing the bones so every future feature has a clean place to live.
+
+  1.1 Move to tokio async
+
+  Replace all thread::spawn with tokio::spawn. Benefits: structured cancellation via CancellationToken, shared state via Arc, backpressure via channels, much lower per-task overhead.
+
+  [dependencies]
+  tokio = { version = "1", features = ["full"] }
+
+  The main run() becomes an async fn driven by tokio::main. Each monitor becomes a tokio::task.
+
+  1.2 Define a Monitor trait
+
+  Every detection source implements one interface:
+
+  #[async_trait]
+  pub trait Monitor: Send + Sync {
+      fn name(&self) -> &str;
+      async fn run(&self, ctx: MonitorContext) -> Result<()>;
+  }
+
+  pub struct MonitorContext {
+      pub config: Arc<RwLock<Config>>,
+      pub events: mpsc::Sender<ThreatEvent>,
+      pub cancel: CancellationToken,
+  }
+
+  Existing filesystem and processes modules become structs that implement Monitor. The main engine loops over Vec<Box<dyn Monitor>> and spawns each one — adding a new monitor is just pushing to that vec.
+
+  1.3 Central ThreatEvent bus
+
+  All monitors publish events; all actions subscribe. This decouples detection from response:
+
+  pub struct ThreatEvent {
+      pub id: Uuid,
+      pub timestamp: DateTime<Utc>,
+      pub monitor: &'static str,
+      pub severity: Severity,          // Info, Low, Medium, High, Critical
+      pub subject: Subject,             // File(path), Process(pid, name), Net(ip, port), ...
+      pub matched_rule: String,
+      pub action_taken: Option<Action>, // filled in by action engine
+  }
+
+  pub enum Subject {
+      File { path: PathBuf, hash: Option<String> },
+      Process { pid: u32, name: String, cmdline: String, user: String },
+      Connection { src: SocketAddr, dst: SocketAddr, proto: Proto },
+      DnsQuery { domain: String, record_type: String },
+  }
+
+  Use a tokio::sync::broadcast channel so multiple subscribers (audit logger, TUI, action engine, alert sender) all receive every event independently.
+
+  1.4 Action policy system
+
+  Replace hardcoded "delete" and "kill" with configurable policies in the config file:
+
+  policies:
+    default_fs_match:
+      - quarantine          # move to quarantine dir, don't delete
+      - alert               # log to audit journal
+    default_ps_match:
+      - kill
+      - alert
+    watch_only:
+      - alert
+
+  Each config rule references a named policy. The action engine reads the event, looks up the policy, and dispatches the appropriate action handlers.
+
+  1.5 Pre-compile all regexes at config load
+
+  Move regex compilation out of compare_regex() into a RuleSet that's built once when config loads:
+
+  pub struct RuleSet {
+      pub patterns: Vec<(String, Regex)>,  // (original pattern, compiled regex)
+  }
+
+  This removes the per-match Regex::new() overhead and catches invalid patterns early (on startup, not mid-scan).
+
+  1.6 Config hot-reload
+
+  Watch the config file itself with notify. On change, reload into the Arc<RwLock<Config>> — all running monitors pick it up on their next iteration without restart.
+
+  1.7 Quarantine instead of delete
+
+  Never delete files directly. Move them to a configurable quarantine directory with a metadata sidecar:
+
+  ~/.tav/quarantine/
+    2026-05-05T14:23:01Z_badfile.exe          # original file
+    2026-05-05T14:23:01Z_badfile.exe.meta     # JSON: original path, hash, rule, timestamp
+
+  Quarantine is reversible. Add a tav quarantine list and tav quarantine restore <id> command.
+
+  1.8 Structured audit journal
+
+  Write all ThreatEvents as newline-delimited JSON to ~/.tav/audit.jsonl. Rotatable, grep-able, importable into SIEM tools. Add tav audit command to query/filter it.
+
+  1.9 Expand the config schema
+
+  tav:
+    quarantine_dir: ~/.tav/quarantine
+    audit_log: ~/.tav/audit.jsonl
+    poll_interval_ms: 500          # replaces hardcoded INTERVAL
+
+  fs:
+    watch: [...]
+    blacklist: [...]
+    policy: default_fs_match
+
+  ps:
+    watch: [...]
+    blacklist: [...]
+    prohibit: { ... }
+    policy: default_ps_match
+    poll_interval_ms: 250          # per-monitor override
+
+  policies:
+    default_fs_match: [quarantine, alert]
+    default_ps_match: [kill, alert]
+
+  ---
+  Phase 2 — Core Detection Expansion
+
+  New monitors and detectors that plug into the Phase 1 architecture.
+
+  2.1 File Hash Checking
+
+  New monitors/hashes.rs. On file creation/modification events (from the FS monitor's event stream), compute SHA-256 and compare against:
+
+  1. Local blocklist — a flat file or SQLite DB of known-bad hashes
+  2. Local allowlist — NSRL or user-defined known-good hashes
+  3. VirusTotal API (optional, rate-limited) — reqwest is already in Cargo.toml
+
+  hashes:
+    enabled: true
+    blocklist: ~/.tav/hashes/blocklist.txt    # sha256 per line
+    allowlist: ~/.tav/hashes/nsrl.txt
+    virustotal:
+      enabled: false
+      api_key: ${VT_API_KEY}
+      threshold: 3                             # flag if >= N engines detect
+
+  Add a tav hashes update command to pull updated hash lists from public feeds (MalwareBazaar, VirusTotal public feed).
+
+  2.2 Script Content Analysis
+
+  New detectors/script.rs. When the FS monitor sees a script file (.sh, .py, .ps1, .js, .rb, etc.), read its content and scan for suspicious patterns beyond just the filename:
+
+  - curl | bash / wget | sh pipes
+  - Base64-encoded payloads (base64 -d | sh)
+  - /dev/tcp reverse shell patterns
+  - eval( chains in Python/JS
+  - Obfuscation indicators (high entropy strings, excessive encoding)
+  - Shebang + network call combinations
+  - Common dropper patterns
+
+  These are regex/pattern rules defined in config:
+
+  scripts:
+    enabled: true
+    extensions: [sh, py, ps1, js, rb, php]
+    patterns:
+      - name: curl_pipe_shell
+        regex: 'curl\s+.*\|\s*(bash|sh)'
+        severity: high
+      - name: base64_exec
+        regex: 'base64\s+-d.*\|\s*(bash|sh|python)'
+        severity: critical
+    policy: default_fs_match
+
+  2.3 Port / Socket Watching
+
+  New monitors/network/ports.rs. Poll the system's network sockets (via /proc/net/tcp + /proc/net/tcp6 on Linux, netstat/lsof abstraction on macOS) and alert on:
+
+  - Unexpected listening ports — define expected ports; alert on new ones
+  - Connections to suspicious IPs/ranges — CIDR blocklist
+  - Process-to-port binding — alert when specific processes open specific ports
+
+  network:
+    ports:
+      enabled: true
+      expected_listeners: [22, 443, 80]       # alert on anything else
+      blocked_destinations:
+        - 10.0.0.0/8                          # example: no internal pivoting
+      monitor_processes:
+        - name: "nc"
+          alert_on: any_listen                 # alert if netcat opens any listener
+      policy: default_net_match
+      poll_interval_ms: 1000
+
+  Use the netstat2 or procfs crate on Linux; libproc bindings on macOS.
+
+  2.4 DNS Monitoring
+
+  New monitors/network/dns.rs. Two approaches depending on privilege level:
+
+  Passive (unprivileged): Watch /etc/hosts modifications. Intercept via hooking the system's DNS resolver cache (/var/run/nscd / mDNSResponder logs) or reading /etc/resolv.conf.
+
+  Active (privileged): Bind a local DNS proxy on 127.0.0.1:53, forward to upstream, and inspect every query. Block responses for domains on a blocklist (effectively a sinkhole).
+
+  dns:
+    enabled: true
+    mode: passive          # or "proxy" (requires root, binds :53)
+    blocklists:
+      - ~/.tav/intel/domains.txt    # one domain per line
+      - ~/.tav/intel/dga_patterns.txt
+    alerts:
+      - pattern: '.*\.onion'        # tor domains
+        severity: high
+      - pattern: '[a-z0-9]{20,}\.(com|net)'   # DGA-like long random names
+        severity: medium
+    policy: dns_alert
+
+  DNS blocklists are available as free feeds (StevenBlack, Pi-hole lists, abuse.ch) — add a tav intel update command to pull them.
+
+  2.5 YARA Rule Support (optional feature flag)
+
+  YARA is the industry standard for malware pattern matching — supports file content, memory, and strings. The yara-rust crate provides bindings.
+
+  [features]
+  yara = ["yara-rust"]
+
+  yara:
+    enabled: true
+    rules_dir: ~/.tav/rules/yara/
+    scan_on:
+      - file_create
+      - file_modify
+    policy: yara_match
+
+  Rules can be pulled from public repos (ESET, Elastic, Neo23x0). This makes tav interoperable with the entire YARA ecosystem.
+
+  ---
+  Phase 3 — Network Intelligence (Live PCAP)
+
+  This phase requires elevated privileges (root or CAP_NET_RAW).
+
+  3.1 Live Packet Capture
+
+  New monitors/network/pcap.rs using the pcap crate (libpcap bindings). Runs as an optional monitor:
+
+  pcap:
+    enabled: false          # opt-in, requires elevated privileges
+    interface: any          # or "en0", "eth0"
+    bpf_filter: ""          # optional Berkeley Packet Filter pre-filter
+    detectors:
+      dns_queries: true      # extract and log/block DNS
+      http_hosts: true       # extract HTTP Host headers
+      tls_sni: true          # extract TLS SNI field (no decryption needed)
+      port_scans: true        # detect SYN scan patterns
+      beaconing: true         # detect regular-interval C2 beaconing
+    policy: pcap_alert
+
+  The pcap monitor feeds events into the same ThreatEvent bus. Key detectors:
+
+  - DNS extraction — parse DNS query packets, check against domain blocklist
+  - TLS SNI extraction — read the SNI field from TLS ClientHello (plaintext, no MITM) to check domains without decrypting traffic
+  - HTTP Host header — for unencrypted HTTP
+  - Beaconing detection — if a process makes connections to the same IP at regular intervals (±10% jitter), flag it as potential C2 beaconing
+  - Port scan detection — many SYN packets with no established connections
+  - Data exfil heuristic — outbound transfers significantly larger than inbound for unknown destinations
+
+  3.2 Flow Tracking
+
+  Maintain a lightweight connection state table in memory. This enables stateful detection (beaconing, large transfers) rather than per-packet analysis. Keep only metadata (src/dst/proto/bytes/timing), not payload.
+
+  ---
+  Phase 4 — Threat Intelligence Integration
+
+  4.1 Local IoC Database
+
+  SQLite database (~/.tav/intel/ioc.db) with tables for:
+  - Malicious file hashes (MD5, SHA-1, SHA-256)
+  - Malicious IPs and CIDR ranges
+  - Malicious domains and patterns
+  - Malicious process signatures
+
+  tav intel add hash sha256:abc123... --source manual --note "found in incident"
+  tav intel add domain evil.com --source abuse_ch
+  tav intel list --type domain
+  tav intel update                  # pull from configured feeds
+
+  4.2 Threat Feed Auto-Update
+
+  Built-in support for common free feeds, scheduled via cron or on startup:
+
+  ┌───────────────────┬─────────────────────┬─────────────────────┐
+  │       Feed        │        Type         │       Source        │
+  ├───────────────────┼─────────────────────┼─────────────────────┤
+  │ abuse.ch URLhaus  │ URLs/Domains/Hashes │ Public API          │
+  ├───────────────────┼─────────────────────┼─────────────────────┤
+  │ MalwareBazaar     │ File hashes         │ Public API          │
+  ├───────────────────┼─────────────────────┼─────────────────────┤
+  │ Feodo Tracker     │ IP blocklist (C2)   │ Text file           │
+  ├───────────────────┼─────────────────────┼─────────────────────┤
+  │ StevenBlack Hosts │ Domain blocklist    │ GitHub              │
+  ├───────────────────┼─────────────────────┼─────────────────────┤
+  │ CIRCL MISP        │ IoCs                │ MISP API (optional) │
+  └───────────────────┴─────────────────────┴─────────────────────┘
+
+  intel:
+    auto_update: true
+    update_interval: 24h
+    feeds:
+      - name: abuse_ch_urlhaus
+        url: https://urlhaus.abuse.ch/downloads/text/
+        type: urls
+      - name: feodo_tracker
+        url: https://feodotracker.abuse.ch/downloads/ipblocklist.txt
+        type: ips
+
+  4.3 Fuzzy Hashing
+
+  Beyond exact hash matching, use fuzzy/similarity hashing (ssdeep or tlsh) to detect malware variants. A file that is 85% similar to a known-bad hash is worth alerting on even if it's been slightly modified.
+
+  ---
+  Phase 5 — Operational Improvements
+
+  These make tav production-usable rather than just functional.
+
+  5.1 Daemon Mode
+
+  Run tav as a proper background daemon:
+
+  tav daemon start      # daemonize, write PID to ~/.tav/tav.pid
+  tav daemon stop       # graceful shutdown via signal
+  tav daemon status     # show running stats, uptime, event counts
+  tav daemon reload     # hot-reload config without restart
+
+  Communicate via a Unix domain socket (~/.tav/tav.sock) using a simple line-delimited JSON protocol. This lets CLI subcommands query the running daemon.
+
+  5.2 TUI Dashboard
+
+  Use ratatui for a live terminal dashboard accessible via tav watch:
+
+  ┌─ TAV v2.0 ─────────────────────────────────────────────────────┐
+  │ Monitors: FS[active] PS[active] Net[active] DNS[active]         │
+  │ Uptime: 4d 2h 17m │ Events today: 47 │ Actions taken: 3        │
+  ├─ Recent Events ────────────────────────────────────────────────┤
+  │ 14:23:01 [HIGH]   FILE  /tmp/x.sh matched 'curl_pipe_shell'    │
+  │ 14:19:44 [MED]    DNS   suspicious-domain.xyz (DGA pattern)    │
+  │ 14:01:22 [LOW]    PROC  python3 watching (matched 'python')     │
+  ├─ Active Monitors ─────────────────────────────────────────────┤
+  │ filesystem  watching: /etc, /tmp, /var/tmp                      │
+  │ processes   watching: 312 processes, 3 blacklist patterns       │
+  │ ports       listening: 22, 443 │ new connections: 14            │
+  └────────────────────────────────────────────────────────────────┘
+
+  5.3 SIEM / Structured Output
+
+  All events optionally forwarded to:
+  - Syslog (syslog crate) for rsyslog/syslog-ng ingestion
+  - JSON stdout for jq pipelines or log aggregators
+  - Webhook (HTTP POST) for custom integrations
+
+  output:
+    syslog: true
+    json_stdout: false
+    webhook: https://my-siem/ingest
+
+  5.4 Privilege Separation
+
+  Split into two processes:
+  - tav-agent — privileged (root), does the actual killing/blocking/pcap
+  - tav CLI — unprivileged, talks to agent via socket
+
+  This follows the model of sudo/polkit and limits the attack surface of the privileged component.
+
+  ---
+  Recommended Implementation Order
+
+  ┌──────────┬─────────┬───────────────────────────────────────────────────┬───────────────────────────────────┐
+  │ Priority │  Phase  │                       What                        │                Why                │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 1        │ 1.1–1.3 │ tokio + Monitor trait + event bus                 │ Everything else depends on this   │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 2        │ 1.4–1.6 │ Action policies + pre-compiled regex + hot-reload │ Stops hardcoded behavior          │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 3        │ 1.7–1.8 │ Quarantine + audit journal                        │ Reversibility and observability   │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 4        │ 2.1     │ Hash checking                                     │ High value, low complexity        │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 5        │ 2.3     │ Port watching                                     │ High value, moderate complexity   │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 6        │ 2.4     │ DNS monitoring (passive first)                    │ High value, incremental           │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 7        │ 2.2     │ Script content analysis                           │ Extends existing FS monitor       │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 8        │ 4.1–4.2 │ IoC database + feed updates                       │ Ties everything together          │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 9        │ 2.5     │ YARA rules                                        │ Unlocks ecosystem compatibility   │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 10       │ 3.1–3.2 │ Live PCAP                                         │ Complex, needs Phase 4 foundation │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 11       │ 5.1     │ Daemon mode                                       │ Operationalize                    │
+  ├──────────┼─────────┼───────────────────────────────────────────────────┼───────────────────────────────────┤
+  │ 12       │ 5.2     │ TUI dashboard                                     │ Polish                            │
+  └──────────┴─────────┴───────────────────────────────────────────────────┴───────────────────────────────────┘
+
+  ---
+  New Cargo.toml Dependencies by Phase
+
+  # Phase 1
+  tokio = { version = "1", features = ["full"] }
+  async-trait = "0.1"
+  tokio-util = "0.7"
+  uuid = { version = "1", features = ["v4"] }
+  chrono = { version = "0.4", features = ["serde"] }
+
+  # Phase 2 - hashes
+  sha2 = "0.10"
+  hex = "0.4"
+  rusqlite = { version = "0.31", features = ["bundled"] }
+
+  # Phase 2 - pcap/network
+  # procfs = "0.16"    # Linux /proc/net parsing
+  # netstat2 = "0.9"   # cross-platform
+
+  # Phase 2 - YARA (feature-gated)
+  # yara = "0.28"
+
+  # Phase 3 - live pcap (feature-gated, requires libpcap)
+  # pcap = "1.3"
+
+  # Phase 5 - TUI
+  # ratatui = "0.26"
+  # crossterm = "0.27"
+
+  # Remove
+  # reqwest (blocking) -> switch to tokio-native reqwest async
+
+  ---
+  Key Design Principles to Carry Forward
+
+  1. Every new monitor is just a struct implementing Monitor — drop it in monitors/, register it in the engine, done
+  2. Monitors detect; the action engine responds — never couple detection logic to response logic
+  3. Nothing is deleted — always quarantine first; add an option to auto-purge after N days
+  4. Config is the API — operators shouldn't need to recompile to add rules
+  5. Feature flags for privileged/native deps — --features pcap,yara so the base binary stays minimal and dependency-free for most use cases
+
+  The biggest leverage point is Phase 1: once the async engine + Monitor trait + event bus exist, every subsequent feature is just implementing Monitor and wiring a new config section. That refactor is probably 3-5 days of focused work and unlocks
+  everything else.
+
+✻ Brewed for 3m 48s

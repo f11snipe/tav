@@ -1,5 +1,7 @@
 pub mod filesystem;
 pub mod processes;
+pub mod ports;
+pub mod dns;
 
 use std::sync::Arc;
 use anyhow::Result;

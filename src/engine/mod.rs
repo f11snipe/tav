@@ -97,18 +97,8 @@ async fn dispatch_actions(
     actions: &[Box<dyn ActionHandler>],
     config:  &Arc<RwLock<Config>>,
 ) {
-    let cfg = config.read().await;
-    // filesystem/hash and filesystem/script sub-monitors share the fs: policy
-    let monitor_cfg = match event.monitor.as_str() {
-        "filesystem" | "filesystem/hash" | "filesystem/script" => &cfg.fs,
-        "processes"  => &cfg.ps,
-        _            => {
-            run_alert_action(event, actions, &cfg).await;
-            return;
-        }
-    };
-    let default_policy = default_policy_for(&event.monitor);
-    let policy = cfg.policy_for(monitor_cfg, &default_policy);
+    let cfg    = config.read().await;
+    let policy = resolve_policy(&cfg, &event.monitor);
 
     for action_name in &policy {
         if let Some(handler) = actions.iter().find(|a| &a.action_name() == action_name) {
@@ -120,15 +110,28 @@ async fn dispatch_actions(
     }
 }
 
-async fn run_alert_action(
-    event:   &mut ThreatEvent,
-    actions: &[Box<dyn ActionHandler>],
-    cfg:     &Config,
-) {
-    if let Some(handler) = actions.iter().find(|a| a.action_name() == ActionName::Alert) {
-        if let Err(e) = handler.execute(event, cfg).await {
-            error!("alert action failed: {:?}", e);
+fn resolve_policy(cfg: &Config, monitor: &str) -> Vec<ActionName> {
+    let default = default_policy_for(monitor);
+    match monitor {
+        "filesystem" | "filesystem/hash" | "filesystem/script" => {
+            cfg.policy_for(&cfg.fs, &default)
         }
+        "processes" => {
+            cfg.policy_for(&cfg.ps, &default)
+        }
+        "network/ports" => {
+            match &cfg.network.ports.policy {
+                Some(p) => cfg.policies.get(p).cloned().unwrap_or(default),
+                None    => default,
+            }
+        }
+        "network/dns" => {
+            match &cfg.dns.policy {
+                Some(p) => cfg.policies.get(p).cloned().unwrap_or(default),
+                None    => default,
+            }
+        }
+        _ => default,
     }
 }
 
@@ -138,6 +141,8 @@ fn default_policy_for(monitor: &str) -> Vec<ActionName> {
             => vec![ActionName::Quarantine, ActionName::Alert],
         "processes"
             => vec![ActionName::Kill, ActionName::Alert],
+        "network/ports" | "network/dns"
+            => vec![ActionName::Alert],
         _   => vec![ActionName::Alert],
     }
 }

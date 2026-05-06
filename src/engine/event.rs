@@ -59,9 +59,19 @@ pub enum Subject {
         cmdline: String,
         user:    Option<String>,
     },
-    // Future variants:
-    // Connection { src: SocketAddr, dst: SocketAddr, proto: String },
-    // DnsQuery   { domain: String, record_type: String },
+    Connection {
+        local_addr:   String,
+        remote_addr:  Option<String>,
+        proto:        String,
+        state:        String,
+        pid:          Option<u32>,
+        process_name: Option<String>,
+    },
+    DnsQuery {
+        domain: String,
+        /// Where the domain was found, e.g. "hosts_file".
+        source: String,
+    },
 }
 
 pub type EventSender   = broadcast::Sender<ThreatEvent>;

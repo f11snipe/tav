@@ -1,3 +1,28 @@
+# Network port watching
+network:
+  ports:
+    enabled: false
+    # Ports that are always expected; anything else triggers an alert.
+    # Leave empty to skip the unexpected-listener check.
+    expected_listeners: [22, 80, 443]
+    # CIDR ranges that are blocked as connection destinations
+    blocked_destinations: []
+    # Alert when specific processes open ports
+    monitor_processes:
+      - name: nc
+        alert_on: any_listen
+    poll_interval_ms: 5000
+
+# DNS monitoring (passive: watches /etc/hosts for suspicious entries)
+dns:
+  enabled: false
+  mode: passive
+  alerts:
+    - pattern: '.*\.onion$'
+      severity: high
+    - pattern: '[a-z0-9]{20,}\.(com|net|org)$'
+      severity: medium
+
 # Filesystem options
 fs:
   # List of directories to walk & watch
