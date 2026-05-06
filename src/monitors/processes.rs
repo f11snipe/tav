@@ -144,12 +144,12 @@ async fn read_config(
     ctx: &MonitorContext,
 ) -> (Vec<String>, RuleSet, HashMap<String, Vec<String>>, u64) {
     let cfg       = ctx.config.read().await;
-    let watchlist = cfg.ps.watch.clone().unwrap_or_default();
-    let bl_pats   = cfg.ps.blacklist.clone().unwrap_or_default();
-    let prohibit  = cfg.ps.prohibit.clone().unwrap_or_default();
-    let poll_ms   = cfg.poll_ms_for(&cfg.ps);
+    let watchlist = cfg.processes.watch.clone();
+    let bl_pats   = cfg.processes.block.clone();
+    let prohibit  = cfg.processes.prohibit.clone();
+    let poll_ms   = cfg.processes.poll_ms;
     let rules     = RuleSet::compile(&bl_pats).unwrap_or_else(|e| {
-        tracing::warn!("process monitor: bad blacklist pattern, using empty ruleset: {:?}", e);
+        tracing::warn!("process monitor: bad block pattern, using empty ruleset: {:?}", e);
         RuleSet::compile(&[]).unwrap()
     });
     (watchlist, rules, prohibit, poll_ms)

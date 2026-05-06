@@ -5,6 +5,9 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 use crate::config::ActionName;
 
+// Re-export so existing `use crate::engine::event::Severity` imports keep working.
+pub use crate::config::Severity;
+
 /// Every detection produces one ThreatEvent published on the event bus.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatEvent {
@@ -32,16 +35,6 @@ impl ThreatEvent {
             action_taken: None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Severity {
-    Info,
-    Low,
-    Medium,
-    High,
-    Critical,
 }
 
 /// What was matched. New monitor types add variants here.

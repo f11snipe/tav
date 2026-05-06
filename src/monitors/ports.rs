@@ -1,14 +1,27 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
-use crate::config::ProcessPortRule;
+use crate::config::{AlertOn, ProcessPortRule};
 use crate::engine::event::{Severity, Subject, ThreatEvent};
 use super::{Monitor, MonitorContext};
 
-pub struct PortMonitor;
+pub struct PortMonitor {
+    /// IP blocklist loaded from IntelDb at startup. Merged with config's block_destinations.
+    pub intel_blocked_ips: Arc<Vec<IpNetwork>>,
+}
+
+impl PortMonitor {
+    pub fn new(intel_blocked_ips: Arc<Vec<String>>) -> Self {
+        let parsed = intel_blocked_ips.iter()
+            .filter_map(|s| s.parse::<IpNetwork>().ok())
+            .collect();
+        Self { intel_blocked_ips: Arc::new(parsed) }
+    }
+}
 
 #[async_trait]
 impl Monitor for PortMonitor {
@@ -17,7 +30,7 @@ impl Monitor for PortMonitor {
     async fn run(&self, ctx: MonitorContext) -> Result<()> {
         let mut config_changed = ctx.config_changed.clone();
         let (mut enabled, mut expected, mut blocked_cidrs, mut proc_rules, mut poll_ms) =
-            read_config(&ctx).await;
+            self.read_config(&ctx).await;
 
         if !enabled {
             tracing::info!("port monitor: disabled in config, sleeping");
@@ -37,7 +50,7 @@ impl Monitor for PortMonitor {
                 }
                 Ok(()) = config_changed.changed() => {
                     (enabled, expected, blocked_cidrs, proc_rules, poll_ms) =
-                        read_config(&ctx).await;
+                        self.read_config(&ctx).await;
                     if !enabled {
                         tracing::info!("port monitor: disabled via config reload");
                         ctx.cancel.cancelled().await;
@@ -107,21 +120,22 @@ impl Monitor for PortMonitor {
                             if !sock.command.to_lowercase().contains(&rule.name.to_lowercase()) {
                                 continue;
                             }
-                            let fires = match rule.alert_on.as_str() {
-                                "any_listen"  => sock.state == "LISTEN",
-                                "any_connect" => sock.state == "ESTABLISHED",
-                                _             => false,
+                            let fires = match rule.alert_on {
+                                AlertOn::AnyListen  => sock.state == "LISTEN",
+                                AlertOn::AnyConnect => sock.state == "ESTABLISHED",
                             };
                             if fires {
                                 let p = port.unwrap_or(0);
                                 let key = (sock.pid, p);
                                 if !known_proc.contains(&key) {
                                     known_proc.insert(key);
+                                    let rule_str = format!("process_port_rule:{}:{}", rule.name,
+                                        match rule.alert_on { AlertOn::AnyListen => "any_listen", AlertOn::AnyConnect => "any_connect" });
                                     events.push(ThreatEvent::new(
                                         &monitor_name,
                                         Severity::High,
                                         conn_subject(sock),
-                                        &format!("process_port_rule:{}:{}", rule.name, rule.alert_on),
+                                        &rule_str,
                                     ));
                                 }
                             }
@@ -248,19 +262,21 @@ fn is_blocked_dest(remote: &str, blocklist: &[IpNetwork]) -> bool {
 
 // ─── Config reader ────────────────────────────────────────────────────────────
 
-async fn read_config(ctx: &MonitorContext) -> (bool, HashSet<u16>, Vec<IpNetwork>, Vec<ProcessPortRule>, u64) {
-    let cfg      = ctx.config.read().await;
-    let pc       = &cfg.network.ports;
-    let enabled  = pc.enabled;
-    let expected = pc.expected_listeners.iter().cloned().collect();
-    let cidrs    = pc.blocked_destinations.iter()
-        .filter_map(|s| s.parse::<IpNetwork>().ok())
-        .collect();
-    let rules    = pc.monitor_processes.clone();
-    let poll_ms  = pc.poll_interval_ms
-        .or_else(|| cfg.global.as_ref().map(|g| g.poll_interval_ms))
-        .unwrap_or(1000);
-    (enabled, expected, cidrs, rules, poll_ms)
+impl PortMonitor {
+    async fn read_config(&self, ctx: &MonitorContext) -> (bool, HashSet<u16>, Vec<IpNetwork>, Vec<ProcessPortRule>, u64) {
+        let cfg      = ctx.config.read().await;
+        let pc       = &cfg.ports;
+        let enabled  = pc.enabled;
+        let expected = pc.expected_listeners.iter().cloned().collect();
+        // Merge config CIDRs with intel-loaded CIDRs
+        let mut cidrs: Vec<IpNetwork> = pc.block_destinations.iter()
+            .filter_map(|s| s.parse::<IpNetwork>().ok())
+            .collect();
+        cidrs.extend(self.intel_blocked_ips.iter().cloned());
+        let rules   = pc.process_rules.clone();
+        let poll_ms = pc.poll_ms;
+        (enabled, expected, cidrs, rules, poll_ms)
+    }
 }
 
 #[cfg(test)]

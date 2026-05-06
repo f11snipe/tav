@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use anyhow::Result;
@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
 use walkdir::WalkDir;
-use crate::config::ScriptConfig;
 use crate::detectors::{ContentDetector, HashCheckResult, HashChecker, RuleSet, ScriptDetector};
 use crate::engine::event::{EventSender, Severity, Subject, ThreatEvent};
 use crate::util::{stream_sha256, stream_sha256_sync};
@@ -141,13 +140,12 @@ async fn process_path(
     let key = path.to_string_lossy().to_string();
     if is_duplicate(dedup, &key, Duration::from_secs(dedup_ttl)) { return; }
 
-    let (hash_enabled, script_enabled, max_bytes, script_cfg) = {
+    let (hash_enabled, script_enabled, max_bytes) = {
         let cfg = ctx.config.read().await;
-        let he  = cfg.hashes.enabled && !hc.is_empty();
-        let se  = cfg.scripts.enabled && !sd.is_empty();
-        let mb  = cfg.scripts.max_file_size_bytes;
-        let sc  = cfg.scripts.clone();
-        (he, se, mb, sc)
+        let he  = cfg.filesystem.hashes.enabled && !hc.is_empty();
+        let se  = cfg.filesystem.scripts.enabled && !sd.is_empty();
+        let mb  = cfg.filesystem.scripts.max_size_mb * 1024 * 1024;
+        (he, se, mb)
     };
 
     // ── 1. Filename regex match ──────────────────────────────────────────────
@@ -173,14 +171,13 @@ async fn process_path(
 
     // ── 3. Content scan ──────────────────────────────────────────────────────
     if script_enabled {
-        scan_content(path, sd, &script_cfg, &ctx.tx, max_bytes).await;
+        scan_content(path, sd, &ctx.tx, max_bytes).await;
     }
 }
 
 async fn scan_content(
     path:      &Path,
     sd:        &ScriptDetector,
-    cfg:       &crate::config::ScriptConfig,
     tx:        &EventSender,
     max_bytes: u64,
 ) {
@@ -199,17 +196,15 @@ async fn scan_content(
             Subject::File { path: path.to_path_buf(), hash: None },
             &m.rule_name);
     }
-
-    let _ = cfg; // used for extension/size gate above via ScriptDetector
 }
 
 fn walk_dir(
-    dir:         &str,
-    rules:       &RuleSet,
-    tx:          &EventSender,
-    dedup:       &DashMap<String, Instant>,
-    dedup_ttl:   u64,
-    hc:          &HashChecker,
+    dir:          &str,
+    rules:        &RuleSet,
+    tx:           &EventSender,
+    dedup:        &DashMap<String, Instant>,
+    dedup_ttl:    u64,
+    _hc:          &HashChecker,
     hash_enabled: bool,
 ) {
     for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
@@ -240,21 +235,20 @@ fn is_duplicate(cache: &DashMap<String, Instant>, key: &str, ttl: Duration) -> b
 }
 
 async fn build_ruleset(ctx: &MonitorContext) -> Result<RuleSet> {
-    let cfg      = ctx.config.read().await;
-    let patterns = cfg.fs.blacklist.clone().unwrap_or_default();
-    RuleSet::compile(&patterns)
+    let cfg = ctx.config.read().await;
+    RuleSet::compile(&cfg.filesystem.block)
 }
 
 async fn get_watchlist(ctx: &MonitorContext) -> Vec<String> {
-    ctx.config.read().await.fs.watch.clone().unwrap_or_default()
+    ctx.config.read().await.filesystem.watch.clone()
 }
 
 async fn get_dedup_ttl(ctx: &MonitorContext) -> u64 {
-    ctx.config.read().await.global.as_ref().map(|g| g.dedup_ttl_secs).unwrap_or(30)
+    ctx.config.read().await.global.dedup_secs
 }
 
 async fn rebuild_script_detector(ctx: &MonitorContext) -> Option<ScriptDetector> {
     let cfg = ctx.config.read().await;
-    if !cfg.scripts.enabled { return Some(ScriptDetector::empty()); }
-    ScriptDetector::from_config(&cfg.scripts.patterns, &cfg.scripts.extensions).ok()
+    if !cfg.filesystem.scripts.enabled { return Some(ScriptDetector::empty()); }
+    ScriptDetector::from_config(&cfg.filesystem.scripts.patterns, &cfg.filesystem.scripts.extensions).ok()
 }

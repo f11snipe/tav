@@ -1,51 +1,141 @@
-# Network port watching
-network:
-  ports:
-    enabled: false
-    # Ports that are always expected; anything else triggers an alert.
-    # Leave empty to skip the unexpected-listener check.
-    expected_listeners: [22, 80, 443]
-    # CIDR ranges that are blocked as connection destinations
-    blocked_destinations: []
-    # Alert when specific processes open ports
-    monitor_processes:
-      - name: nc
-        alert_on: any_listen
-    poll_interval_ms: 5000
+# ── Global settings ────────────────────────────────────────────────────────────
+global:
+  quarantine_dir: ~/.tav/quarantine
+  audit_log:      ~/.tav/audit.jsonl
+  dedup_secs:     30              # suppress repeat events for the same subject
 
-# DNS monitoring (passive: watches /etc/hosts for suspicious entries)
-dns:
-  enabled: false
-  mode: passive
-  alerts:
-    - pattern: '.*\.onion$'
-      severity: high
-    - pattern: '[a-z0-9]{20,}\.(com|net|org)$'
-      severity: medium
+# ── Named action policies ──────────────────────────────────────────────────────
+# Optional. Any monitor `policy:` field accepts either a name from this map
+# or an inline list of actions: [quarantine, alert]
+# Available actions: quarantine | kill | alert | watch_only
+policies:
+  strict:      [quarantine, alert]
+  notify_only: [alert]
+  kill_alert:  [kill, alert]
 
-# Filesystem options
-fs:
-  # List of directories to walk & watch
+# ── Filesystem monitor ─────────────────────────────────────────────────────────
+filesystem:
+  enabled: true
+  policy: strict                  # or inline: [quarantine, alert]
+
+  # Directories to recursively walk and watch for file events
   watch:
-    - /tmp/watchme
-    - ./tmp
-  # Blacklist files (simple case insensitive regex)
-  blacklist:
+    - /tmp
+    - /var/tmp
+
+  # Regex patterns matched case-insensitively against file paths
+  block:
     - badfile.*
     - deleteme[0-9]+
     - dontletmelive
-# Process options
-ps:
-  # Watch for processes (no action)
+
+  # ── File hash checking ────────────────────────────────────────────────────
+  hashes:
+    enabled: false
+    block_list: ~/.tav/hashes/blocklist.txt   # SHA-256 hex, one per line
+    allow_list: ~/.tav/hashes/allowlist.txt
+    virustotal:
+      enabled:   false
+      api_key:   ${VT_API_KEY}
+      threshold: 3                            # flag if >= N engines detect it
+
+  # ── Script content analysis ───────────────────────────────────────────────
+  scripts:
+    enabled: false
+    policy: strict                # overrides filesystem.policy for script hits
+    max_size_mb: 10
+    extensions: [sh, py, ps1, js, rb, php, pl]
+    patterns:
+      - name:     curl_pipe_shell
+        regex:    'curl\s+.*\|\s*(bash|sh)'
+        severity: high
+      - name:     base64_exec
+        regex:    'base64\s+-d.*\|\s*(bash|sh|python)'
+        severity: critical
+      - name:     dev_tcp_shell
+        regex:    '/dev/tcp/'
+        severity: critical
+      - name:     eval_chain
+        regex:    'eval\s*\(.*eval'
+        severity: high
+
+# ── Process monitor ────────────────────────────────────────────────────────────
+processes:
+  enabled: true
+  policy: kill_alert
+  poll_ms: 500
+
+  # Log matching processes — no action taken, watch_only
   watch:
-    - sketchy
-  # Blacklist processes (partial case insensitive compare)
-  blacklist:
+    - sketchy_tool
+
+  # Regex patterns matched against process name/cmdline — triggers policy
+  block:
     - malwareps
     - killthisproc
-  # Blacklist processes for specific users
+    - cryptominer
+
+  # Kill specific binaries when run by specific users
   prohibit:
-    # Don't allow www-data user to run sh or bash processes
     www-data:
       - /bin/sh
       - /bin/bash
+
+# ── Port/socket monitor ────────────────────────────────────────────────────────
+ports:
+  enabled: false
+  policy: notify_only
+  poll_ms: 5000
+
+  # Ports expected to be listening; alert on anything else.
+  # Leave empty to disable the unexpected-listener check.
+  expected_listeners: [22, 80, 443]
+
+  # CIDR ranges blocked as outbound connection destinations
+  block_destinations:
+    - 192.168.0.0/16              # example: flag internal pivoting
+
+  # Alert when named processes open specific socket types
+  process_rules:
+    - name:     nc
+      alert_on: any_listen        # any_listen | any_connect
+    - name:     ncat
+      alert_on: any_listen
+
+# ── Threat intelligence ────────────────────────────────────────────────────────
+intel:
+  auto_update: false            # pull feeds on startup if stale
+  update_interval_hours: 24
+
+  # Run `tav intel update -c conf/config.yaml` to fetch these feeds manually.
+  feeds:
+    - name:      feodo_tracker
+      url:       https://feodotracker.abuse.ch/downloads/ipblocklist.txt
+      feed_type: ip
+      enabled:   false          # set to true to enable
+
+    - name:      malware_bazaar
+      url:       https://bazaar.abuse.ch/export/txt/sha256/full/
+      feed_type: hash
+      enabled:   false
+
+    - name:      stevenblack_hosts
+      url:       https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+      feed_type: domain
+      enabled:   false
+
+    - name:      urlhaus_domains
+      url:       https://urlhaus.abuse.ch/downloads/text/
+      feed_type: domain
+      enabled:   false
+
+# ── DNS monitor (passive) ──────────────────────────────────────────────────────
+dns:
+  enabled: false
+  mode: passive                   # passive = watch /etc/hosts for changes
+  policy: notify_only
+  block_patterns:
+    - pattern:  '.*\.onion$'
+      severity: high
+    - pattern:  '[a-z0-9]{20,}\.(com|net|org)$'
+      severity: medium            # DGA-like long random hostnames

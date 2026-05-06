@@ -113,23 +113,23 @@ async fn dispatch_actions(
 fn resolve_policy(cfg: &Config, monitor: &str) -> Vec<ActionName> {
     let default = default_policy_for(monitor);
     match monitor {
-        "filesystem" | "filesystem/hash" | "filesystem/script" => {
-            cfg.policy_for(&cfg.fs, &default)
+        "filesystem" | "filesystem/hash" => {
+            cfg.resolve_policy(cfg.filesystem.policy.as_ref(), &default)
+        }
+        "filesystem/script" => {
+            // Script matches use the scripts sub-policy, falling back to filesystem policy.
+            let p = cfg.filesystem.scripts.policy.as_ref()
+                .or(cfg.filesystem.policy.as_ref());
+            cfg.resolve_policy(p, &default)
         }
         "processes" => {
-            cfg.policy_for(&cfg.ps, &default)
+            cfg.resolve_policy(cfg.processes.policy.as_ref(), &default)
         }
         "network/ports" => {
-            match &cfg.network.ports.policy {
-                Some(p) => cfg.policies.get(p).cloned().unwrap_or(default),
-                None    => default,
-            }
+            cfg.resolve_policy(cfg.ports.policy.as_ref(), &default)
         }
         "network/dns" => {
-            match &cfg.dns.policy {
-                Some(p) => cfg.policies.get(p).cloned().unwrap_or(default),
-                None    => default,
-            }
+            cfg.resolve_policy(cfg.dns.policy.as_ref(), &default)
         }
         _ => default,
     }
