@@ -6,6 +6,9 @@ use tokio::sync::{watch, RwLock};
 use tokio_util::sync::CancellationToken;
 use crate::config::Config;
 
+/// A cloneable handle to the config-changed watch sender.
+pub type ChangedSender = Arc<watch::Sender<()>>;
+
 pub type SharedConfig = Arc<RwLock<Config>>;
 
 pub async fn load_config(path: &Path) -> Result<Config> {
@@ -26,7 +29,7 @@ pub async fn watch_config(
     path:       PathBuf,
     shared:     SharedConfig,
     cancel:     CancellationToken,
-    changed_tx: watch::Sender<()>,
+    changed_tx: ChangedSender,
 ) -> Result<()> {
     let (notify_tx, mut notify_rx) =
         tokio::sync::mpsc::channel::<notify::Result<notify::Event>>(32);
@@ -64,7 +67,7 @@ pub async fn watch_config(
                         match load_config(&path).await {
                             Ok(new_cfg) => {
                                 *shared.write().await = new_cfg;
-                                let _ = changed_tx.send(());
+                                changed_tx.send(()).ok();
                                 tracing::info!("config reloaded from {:?}", path);
                             }
                             Err(e) => {

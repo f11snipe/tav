@@ -150,6 +150,12 @@ pcap:
     beaconing:   false      # detect regular-interval C2 connections
     port_scans:  false      # detect SYN-only port sweeps
 
+# ── Structured output modes ───────────────────────────────────────────────────
+output:
+  json_stdout: false    # emit each ThreatEvent as NDJSON to stdout
+  syslog:      false    # forward to syslog via `logger` (daemon.warning)
+  # webhook: https://hooks.example.com/tav  # HTTP POST JSON events here
+
 # ── DNS monitor (passive) ──────────────────────────────────────────────────────
 dns:
   enabled: false

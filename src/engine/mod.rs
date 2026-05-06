@@ -80,7 +80,17 @@ impl Engine {
             });
         }
 
-        // Wait for Ctrl-C, then cancel all monitors
+        // Wait for SIGINT (Ctrl-C) or SIGTERM (daemon stop), then cancel all monitors
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate())?;
+            tokio::select! {
+                r = tokio::signal::ctrl_c() => { r?; }
+                _ = sigterm.recv() => {}
+            }
+        }
+        #[cfg(not(unix))]
         tokio::signal::ctrl_c().await?;
         tracing::info!("tav: shutting down...");
         cancel.cancel();
@@ -101,7 +111,7 @@ async fn dispatch_actions(
     let policy = resolve_policy(&cfg, &event.monitor);
 
     for action_name in &policy {
-        if let Some(handler) = actions.iter().find(|a| &a.action_name() == action_name) {
+        for handler in actions.iter().filter(|a| &a.action_name() == action_name) {
             match handler.execute(event, &cfg).await {
                 Ok(()) => { event.action_taken = Some(action_name.clone()); }
                 Err(e) => error!("action {:?} failed for event {}: {:?}", action_name, event.id, e),

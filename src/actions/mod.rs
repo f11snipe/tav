@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod kill;
+pub mod output;
 pub mod quarantine;
 pub mod watch_only;
 

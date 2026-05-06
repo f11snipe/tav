@@ -7,7 +7,11 @@ pub fn run() {
         .subcommand(cmd::ping::command())
         .subcommand(cmd::quarantine::command())
         .subcommand(cmd::audit::command())
-        .subcommand(cmd::intel::command());
+        .subcommand(cmd::intel::command())
+        .subcommand(cmd::daemon::command());
+
+    #[cfg(feature = "tui")]
+    let app = app.subcommand(cmd::watch::tui::command());
 
     let v = app.render_version();
     let matches = app.get_matches();
@@ -24,6 +28,9 @@ pub fn run() {
             ("quarantine", m) => cmd::quarantine::run(&matches, m),
             ("audit",      m) => cmd::audit::run(&matches, m),
             ("intel",      m) => cmd::intel::run(&matches, m),
+            ("daemon",     m) => cmd::daemon::run(&matches, m),
+            #[cfg(feature = "tui")]
+            ("watch",      m) => cmd::watch::tui::run(&matches, m),
             _ => unreachable!(),
         },
     );

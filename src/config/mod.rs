@@ -73,6 +73,9 @@ pub struct Config {
 
     #[serde(default)]
     pub pcap: PcapConfig,
+
+    #[serde(default)]
+    pub output: OutputConfig,
 }
 
 // ── Global settings ───────────────────────────────────────────────────────────
@@ -500,6 +503,33 @@ impl Default for PcapDetectors {
             tls_sni:     true,
             beaconing:   false,
             port_scans:  false,
+        }
+    }
+}
+
+// ── Output modes ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutputConfig {
+    /// Emit every ThreatEvent as a JSON line to stdout (NDJSON).
+    #[serde(default)]
+    pub json_stdout: bool,
+
+    /// Send events to syslog via the `logger` command (daemon.warning priority).
+    #[serde(default)]
+    pub syslog: bool,
+
+    /// HTTP POST JSON events to this URL.
+    #[serde(default)]
+    pub webhook: Option<String>,
+}
+
+impl Default for OutputConfig {
+    fn default() -> Self {
+        Self {
+            json_stdout: false,
+            syslog:      false,
+            webhook:     None,
         }
     }
 }

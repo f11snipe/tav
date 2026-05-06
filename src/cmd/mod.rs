@@ -1,10 +1,12 @@
 pub mod audit;
 pub mod config;
+pub mod daemon;
 pub mod default;
 pub mod intel;
 pub mod ping;
 pub mod quarantine;
 pub mod run;
+pub mod watch;
 use std::process::exit;
 
 use anyhow::Result;
