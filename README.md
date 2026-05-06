@@ -34,7 +34,7 @@ cargo build --release
 # With live packet capture (requires libpcap + root to run)
 cargo build --release --features pcap
 
-# With YARA rule scanning (requires libyara)
+# With YARA rule scanning (requires libyara — see below)
 cargo build --release --features yara
 
 # With TUI dashboard
@@ -43,6 +43,17 @@ cargo build --release --features tui
 # All optional features
 cargo build --release --features pcap,yara,tui
 ```
+
+The `yara` feature requires the native `libyara` library and headers. On macOS:
+
+```bash
+brew install yara
+export YARA_LIBRARY_PATH=/opt/homebrew/lib
+export BINDGEN_EXTRA_CLANG_ARGS="-I/opt/homebrew/include"
+cargo build --release --features yara
+```
+
+On Linux (Debian/Ubuntu): `apt install libyara-dev`
 
 ```bash
 # Install from source

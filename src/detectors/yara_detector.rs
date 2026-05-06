@@ -25,7 +25,8 @@ impl YaraDetector {
         {
             let ext = entry.path().extension().and_then(|x| x.to_str()).unwrap_or("");
             if !matches!(ext, "yar" | "yara") { continue; }
-            compiler.add_rules_file(entry.path())
+            // add_rules_file is builder-style: takes self, returns self
+            compiler = compiler.add_rules_file(entry.path())
                 .map_err(|e| anyhow::anyhow!("yara compile error in {}: {:?}", entry.path().display(), e))?;
             loaded += 1;
         }
@@ -55,7 +56,7 @@ impl ContentDetector for YaraDetector {
             let severity = rule.metadatas.iter()
                 .find(|m| m.identifier == "severity")
                 .and_then(|m| match &m.value {
-                    yara::MetadataValue::String(s) => Some(s.as_str()),
+                    yara::MetadataValue::String(s) => Some(*s),
                     _ => None,
                 })
                 .and_then(parse_severity)
@@ -86,8 +87,8 @@ mod tests {
     use super::*;
 
     fn make_detector(rules_str: &str) -> YaraDetector {
-        let mut compiler = yara::Compiler::new().unwrap();
-        compiler.add_rules_str(rules_str).unwrap();
+        let compiler = yara::Compiler::new().unwrap()
+            .add_rules_str(rules_str).unwrap();
         YaraDetector { rules: compiler.compile_rules().unwrap() }
     }
 
