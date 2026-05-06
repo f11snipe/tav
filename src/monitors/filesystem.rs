@@ -14,11 +14,16 @@ use super::{Monitor, MonitorContext};
 pub struct FilesystemMonitor {
     pub hash_checker:    Arc<HashChecker>,
     pub script_detector: Arc<ScriptDetector>,
+    pub yara_detector:   Option<Arc<dyn ContentDetector>>,
 }
 
 impl FilesystemMonitor {
-    pub fn new(hash_checker: Arc<HashChecker>, script_detector: Arc<ScriptDetector>) -> Self {
-        Self { hash_checker, script_detector }
+    pub fn new(
+        hash_checker:    Arc<HashChecker>,
+        script_detector: Arc<ScriptDetector>,
+        yara_detector:   Option<Arc<dyn ContentDetector>>,
+    ) -> Self {
+        Self { hash_checker, script_detector, yara_detector }
     }
 }
 
@@ -33,6 +38,7 @@ impl Monitor for FilesystemMonitor {
         let dedup: Arc<DashMap<String, Instant>> = Arc::new(DashMap::new());
         let hash_checker       = self.hash_checker.clone();
         let mut script_det     = self.script_detector.clone();
+        let yara_det           = self.yara_detector.clone();
 
         if watchlist.is_empty() {
             tracing::info!("filesystem monitor: no watch paths configured, sleeping");
@@ -53,8 +59,7 @@ impl Monitor for FilesystemMonitor {
                 tracing::info!("filesystem: walking {}", dir_clone);
                 walk_dir(&dir_clone, &rules_clone, &tx_clone, &dedup_clone, dedup_ttl, &hc_clone, hash_enabled);
             });
-            // Content scan on walk is async — spawned separately after walk is done
-            // (walk emits events; the notify loop handles content scanning for creates)
+            // Content scan on walk is async; the notify loop handles it for new/modified files.
             let _ = (sd_clone, ); // suppress unused warning; used in notify loop below
         }
 
@@ -107,6 +112,7 @@ impl Monitor for FilesystemMonitor {
                                     &ruleset,
                                     &hash_checker,
                                     &script_det,
+                                    yara_det.as_deref(),
                                     &ctx,
                                     &dedup,
                                     dedup_ttl,
@@ -127,25 +133,29 @@ impl Monitor for FilesystemMonitor {
 ///   1. Dedup check
 ///   2. Filename regex match  → emit `filesystem` event
 ///   3. Hash check            → emit `filesystem/hash` event (blocked) or skip (allowed)
-///   4. Content scan          → emit `filesystem/script` events per rule hit
+///   4. Script content scan   → emit `filesystem/script` events per rule hit
+///   5. YARA scan             → emit `filesystem/yara` events per rule hit
 async fn process_path(
-    path:       &Path,
-    ruleset:    &RuleSet,
-    hc:         &HashChecker,
-    sd:         &ScriptDetector,
-    ctx:        &MonitorContext,
-    dedup:      &DashMap<String, Instant>,
-    dedup_ttl:  u64,
+    path:      &Path,
+    ruleset:   &RuleSet,
+    hc:        &HashChecker,
+    sd:        &ScriptDetector,
+    yd:        Option<&dyn ContentDetector>,
+    ctx:       &MonitorContext,
+    dedup:     &DashMap<String, Instant>,
+    dedup_ttl: u64,
 ) {
     let key = path.to_string_lossy().to_string();
     if is_duplicate(dedup, &key, Duration::from_secs(dedup_ttl)) { return; }
 
-    let (hash_enabled, script_enabled, max_bytes) = {
-        let cfg = ctx.config.read().await;
-        let he  = cfg.filesystem.hashes.enabled && !hc.is_empty();
-        let se  = cfg.filesystem.scripts.enabled && !sd.is_empty();
-        let mb  = cfg.filesystem.scripts.max_size_mb * 1024 * 1024;
-        (he, se, mb)
+    let (hash_enabled, script_enabled, max_bytes, yara_enabled, yara_max_bytes) = {
+        let cfg  = ctx.config.read().await;
+        let he   = cfg.filesystem.hashes.enabled && !hc.is_empty();
+        let se   = cfg.filesystem.scripts.enabled && !sd.is_empty();
+        let mb   = cfg.filesystem.scripts.max_size_mb * 1024 * 1024;
+        let ye   = cfg.filesystem.yara.enabled && yd.is_some();
+        let ymb  = cfg.filesystem.yara.max_size_mb * 1024 * 1024;
+        (he, se, mb, ye, ymb)
     };
 
     // ── 1. Filename regex match ──────────────────────────────────────────────
@@ -169,20 +179,32 @@ async fn process_path(
         }
     }
 
-    // ── 3. Content scan ──────────────────────────────────────────────────────
+    // ── 3. Script content scan ───────────────────────────────────────────────
     if script_enabled {
-        scan_content(path, sd, &ctx.tx, max_bytes).await;
+        scan_content(path, sd, &ctx.tx, max_bytes, "filesystem/script").await;
+    }
+
+    // ── 4. YARA scan ─────────────────────────────────────────────────────────
+    if yara_enabled {
+        if let Some(yd) = yd {
+            scan_content(path, yd, &ctx.tx, yara_max_bytes, "filesystem/yara").await;
+        }
     }
 }
 
+/// Scan a single file with a content detector and emit events.
+/// If `detector.extensions()` is empty, all file types are scanned.
 async fn scan_content(
-    path:      &Path,
-    sd:        &ScriptDetector,
-    tx:        &EventSender,
-    max_bytes: u64,
+    path:         &Path,
+    detector:     &dyn ContentDetector,
+    tx:           &EventSender,
+    max_bytes:    u64,
+    monitor_name: &str,
 ) {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if !<ScriptDetector as ContentDetector>::extensions(sd).iter().any(|e| e == ext) { return; }
+    let ext  = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let exts = detector.extensions();
+    // Empty extension list means the detector handles all file types.
+    if !exts.is_empty() && !exts.iter().any(|e| e == ext) { return; }
 
     let Ok(meta) = tokio::fs::metadata(path).await else { return };
     if meta.len() > max_bytes { return; }
@@ -190,9 +212,8 @@ async fn scan_content(
     let Ok(bytes) = tokio::fs::read(path).await else { return };
     let content = String::from_utf8_lossy(&bytes);
 
-    let hits = <ScriptDetector as ContentDetector>::scan(sd, path, &content).await;
-    for m in hits {
-        emit_event(tx, "filesystem/script", m.severity,
+    for m in detector.scan(path, &content).await {
+        emit_event(tx, monitor_name, m.severity,
             Subject::File { path: path.to_path_buf(), hash: None },
             &m.rule_name);
     }

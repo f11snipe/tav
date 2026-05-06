@@ -117,8 +117,12 @@ fn resolve_policy(cfg: &Config, monitor: &str) -> Vec<ActionName> {
             cfg.resolve_policy(cfg.filesystem.policy.as_ref(), &default)
         }
         "filesystem/script" => {
-            // Script matches use the scripts sub-policy, falling back to filesystem policy.
             let p = cfg.filesystem.scripts.policy.as_ref()
+                .or(cfg.filesystem.policy.as_ref());
+            cfg.resolve_policy(p, &default)
+        }
+        "filesystem/yara" => {
+            let p = cfg.filesystem.yara.policy.as_ref()
                 .or(cfg.filesystem.policy.as_ref());
             cfg.resolve_policy(p, &default)
         }
@@ -137,7 +141,7 @@ fn resolve_policy(cfg: &Config, monitor: &str) -> Vec<ActionName> {
 
 fn default_policy_for(monitor: &str) -> Vec<ActionName> {
     match monitor {
-        "filesystem" | "filesystem/hash" | "filesystem/script"
+        "filesystem" | "filesystem/hash" | "filesystem/script" | "filesystem/yara"
             => vec![ActionName::Quarantine, ActionName::Alert],
         "processes"
             => vec![ActionName::Kill, ActionName::Alert],

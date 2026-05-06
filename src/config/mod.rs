@@ -124,6 +124,9 @@ pub struct FilesystemConfig {
 
     #[serde(default)]
     pub scripts: ScriptConfig,
+
+    #[serde(default)]
+    pub yara: YaraConfig,
 }
 
 impl Default for FilesystemConfig {
@@ -135,6 +138,7 @@ impl Default for FilesystemConfig {
             block:   Vec::new(),
             hashes:  HashConfig::default(),
             scripts: ScriptConfig::default(),
+            yara:    YaraConfig::default(),
         }
     }
 }
@@ -303,6 +307,40 @@ pub struct VirusTotalConfig {
 }
 
 fn default_vt_threshold() -> u32 { 3 }
+
+// ── YARA scanning (filesystem sub-detector, feature = "yara") ─────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct YaraConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Directory containing `.yar` / `.yara` rule files (compiled at startup).
+    #[serde(default = "default_yara_rules_dir")]
+    pub rules_dir: String,
+
+    /// Maximum file size to scan in megabytes (default 50 MB).
+    #[serde(default = "default_yara_max_size_mb")]
+    pub max_size_mb: u64,
+
+    /// Overrides `filesystem.policy` for YARA hits.
+    #[serde(default)]
+    pub policy: Option<PolicyRef>,
+}
+
+impl Default for YaraConfig {
+    fn default() -> Self {
+        Self {
+            enabled:     false,
+            rules_dir:   default_yara_rules_dir(),
+            max_size_mb: default_yara_max_size_mb(),
+            policy:      None,
+        }
+    }
+}
+
+fn default_yara_rules_dir()    -> String { "~/.tav/rules/yara".into() }
+fn default_yara_max_size_mb()  -> u64   { 50 }
 
 // ── Script content scanning (filesystem sub-detector) ─────────────────────────
 

@@ -37,7 +37,11 @@ tempfile = "3"
 
 [features]
 default = ["cli"]
-# list optionals here:
 cli = ["clap"]
+yara = ["dep:yara"]
 
 required-features = ["cli"]
+
+[dependencies.yara]
+version = "0.28"
+optional = true

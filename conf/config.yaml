@@ -39,6 +39,13 @@ filesystem:
       api_key:   ${VT_API_KEY}
       threshold: 3                            # flag if >= N engines detect it
 
+  # ── YARA rule scanning (requires `--features yara` build) ───────────────
+  yara:
+    enabled: false
+    rules_dir: ~/.tav/rules/yara   # place .yar / .yara files here
+    max_size_mb: 50
+    # policy: strict               # overrides filesystem.policy for YARA hits
+
   # ── Script content analysis ───────────────────────────────────────────────
   scripts:
     enabled: false

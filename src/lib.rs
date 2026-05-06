@@ -37,7 +37,7 @@ pub async fn run_async(config_file: &Path) -> Result<()> {
     use engine::Engine;
     use std::collections::HashSet;
     use std::sync::Arc;
-    use detectors::{HashChecker, ScriptDetector};
+    use detectors::{ContentDetector, HashChecker, ScriptDetector};
     use monitors::{
         filesystem::FilesystemMonitor,
         processes::ProcessMonitor,
@@ -84,8 +84,26 @@ pub async fn run_async(config_file: &Path) -> Result<()> {
         }
     };
 
+    // Build YARA detector if the feature is compiled in and enabled in config.
+    #[cfg(feature = "yara")]
+    let yara_detector: Option<Arc<dyn ContentDetector>> = {
+        use detectors::YaraDetector;
+        let cfg = shared.read().await;
+        if cfg.filesystem.yara.enabled {
+            let rules_dir = config::Config::expand_path(&cfg.filesystem.yara.rules_dir);
+            match YaraDetector::from_rules_dir(&rules_dir) {
+                Ok(d)  => Some(Arc::new(d) as Arc<dyn ContentDetector>),
+                Err(e) => { tracing::warn!("yara: failed to load rules: {:#}", e); None }
+            }
+        } else {
+            None
+        }
+    };
+    #[cfg(not(feature = "yara"))]
+    let yara_detector: Option<Arc<dyn ContentDetector>> = None;
+
     Engine::new(shared, changed_rx)
-        .add_monitor(FilesystemMonitor::new(hash_checker, script_detector))
+        .add_monitor(FilesystemMonitor::new(hash_checker, script_detector, yara_detector))
         .add_monitor(ProcessMonitor)
         .add_monitor(PortMonitor::new(blocked_ips))
         .add_monitor(DnsMonitor::new(blocked_domains))
