@@ -2,73 +2,58 @@
 //!
 //! `tav` is a minimal, portable terminal antivirus
 
-use std::fs::File;
-use std::io::BufReader;
-use std::collections::HashMap;
-use regex::Regex;
-use serde::{Serialize, Deserialize};
-use tracing::info;
+use std::path::Path;
+use anyhow::Result;
+use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
-pub mod filesystem;
-pub mod processes;
+pub mod config;
+pub mod engine;
+pub mod monitors;
+pub mod detectors;
+pub mod actions;
 
 pub mod cli;
 pub mod cmd;
 pub mod data;
 pub use data::CmdExit;
 
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct ConfigGroup {
-    pub watch: Option<Vec<String>>,
-    pub prohibit: Option<HashMap<String, Vec<String>>>,
-    pub blacklist: Option<Vec<String>>,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct ConfigData {
-    pub fs: ConfigGroup,
-    pub ps: ConfigGroup,
-}
-
-pub fn compare_regex(subject: &str, blacklisted: &String) -> bool {
-    let re = Regex::new(format!("(?mi){}", blacklisted).as_str()).unwrap();
-    let Some(_) = re.captures(subject) else {
-        return false;
-    };
-    info!("Found match for: '{}' ({})", blacklisted, subject);
-    return true;
-}
-
-pub fn config(config_file: &str) -> Result<(), serde_yaml::Error> {
+/// Display the parsed config for `tav config` subcommand.
+pub fn config_display(config_file: &str) -> Result<(), serde_yaml::Error> {
+    use std::fs::File;
+    use std::io::BufReader;
     let file = File::open(config_file).expect("Missing config file");
-    let buf_reader = BufReader::new(file);
-    let config: ConfigData = serde_yaml::from_reader(buf_reader)?;
-
+    let cfg: config::Config = serde_yaml::from_reader(BufReader::new(file))?;
     println!("Loaded Config: {:?}", config_file);
-    dbg!(config);
-
+    dbg!(cfg);
     Ok(())
 }
 
-pub fn run(config_file: &str) -> Result<(), serde_yaml::Error> {
-    let file = File::open(config_file).expect("Missing config file");
-    let buf_reader = BufReader::new(file);
-    let config: ConfigData = serde_yaml::from_reader(buf_reader)?;
+/// Async entry point for `tav run`.
+pub async fn run_async(config_file: &Path) -> Result<()> {
+    use config::loader::{load_shared, watch_config};
+    use engine::Engine;
+    use monitors::{filesystem::FilesystemMonitor, processes::ProcessMonitor};
+    use actions::{audit::AuditAction, kill::KillAction, quarantine::QuarantineAction};
 
-    let fs_watch = &config.fs.watch.unwrap_or_else(|| Vec::new());
-    let fs_blacklist = &config.fs.blacklist.unwrap_or_else(|| Vec::new());
-    let ps_watch = &config.ps.watch.unwrap_or_else(|| Vec::new());
-    let ps_blacklist = &config.ps.blacklist.unwrap_or_else(|| Vec::new());
-    let ps_prohibit = &config.ps.prohibit.unwrap_or_else(|| HashMap::new());
-    let mut handles = Vec::new();
+    let shared = load_shared(config_file).await?;
+    let (changed_tx, changed_rx) = watch::channel(());
+    let cancel = CancellationToken::new();
 
-    processes::handle(ps_watch, ps_blacklist, ps_prohibit, &mut handles);
-    filesystem::handle(fs_watch, fs_blacklist, &mut handles);
+    let watcher_cancel = cancel.clone();
+    tokio::spawn(watch_config(
+        config_file.to_path_buf(),
+        shared.clone(),
+        watcher_cancel,
+        changed_tx,
+    ));
 
-    for h in handles {
-        h.join().unwrap();
-    }
-
-    Ok(())
+    Engine::new(shared, changed_rx)
+        .add_monitor(FilesystemMonitor)
+        .add_monitor(ProcessMonitor)
+        .add_action(QuarantineAction)
+        .add_action(KillAction)
+        .add_action(AuditAction)
+        .run()
+        .await
 }

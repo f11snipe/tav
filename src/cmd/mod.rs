@@ -1,6 +1,8 @@
-pub mod default;
+pub mod audit;
 pub mod config;
+pub mod default;
 pub mod ping;
+pub mod quarantine;
 pub mod run;
 use std::process::exit;
 

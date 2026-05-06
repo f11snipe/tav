@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::{Arg, ArgMatches, Command};
-use tracing::info;
 use crate::CmdExit;
 
 pub fn command() -> Command {
@@ -18,13 +17,16 @@ pub fn command() -> Command {
 
 pub fn run(
     _matches: &ArgMatches,
-    _subcommand_matches: &ArgMatches,
+    subcommand_matches: &ArgMatches,
 ) -> Result<CmdExit> {
-    let config_file = _subcommand_matches.get_one::<String>("config").unwrap();
-    info!("[run] matches: {:?}", _matches);
-    info!("[run] subcommand matches: {:?}", _subcommand_matches);
+    let config_file = subcommand_matches.get_one::<String>("config").unwrap();
     println!("Running with config: {}", config_file);
-    crate::run(config_file)?;
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(crate::run_async(std::path::Path::new(config_file)))?;
+
     Ok(CmdExit {
         code: exitcode::OK,
         message: Some("Goodbye".to_string()),

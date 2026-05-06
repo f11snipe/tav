@@ -21,7 +21,7 @@ pub fn run(
 ) -> Result<CmdExit> {
     let config_file = _subcommand_matches.get_one::<String>("config").unwrap();
     println!("Running with config: {}", config_file);
-    crate::config(config_file)?;
+    crate::config_display(config_file)?;
     Ok(CmdExit {
         code: exitcode::OK,
         message: Some("Goodbye".to_string()),
