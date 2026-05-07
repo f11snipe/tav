@@ -45,8 +45,8 @@ impl Monitor for DnsMonitor {
         // Set up filesystem watcher for /etc/hosts and /etc/resolv.conf
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<()>(16);
 
+        let (dns_shutdown_tx, dns_shutdown_rx) = std::sync::mpsc::channel::<()>();
         let _watcher_handle = tokio::task::spawn_blocking(move || {
-            let tx = notify_tx.clone();
             let callback_tx = notify_tx;
             let mut watcher = match RecommendedWatcher::new(
                 move |_res| { let _ = callback_tx.blocking_send(()); },
@@ -66,15 +66,14 @@ impl Monitor for DnsMonitor {
                 }
             }
 
-            // Keep watcher alive
-            let _ = tx; // suppress unused warning
-            std::thread::park();
+            let _ = dns_shutdown_rx.recv(); // returns when sender is dropped on cancel
         });
 
         loop {
             tokio::select! {
                 _ = ctx.cancel.cancelled() => {
                     tracing::info!("dns monitor: shutting down");
+                    drop(dns_shutdown_tx);
                     break;
                 }
                 Ok(()) = config_changed.changed() => {

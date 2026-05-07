@@ -18,15 +18,23 @@ pub struct Engine {
     actions:  Vec<Box<dyn ActionHandler>>,
     /// Receives a tick whenever the config file is reloaded.
     config_changed_rx: watch::Receiver<()>,
+    /// Shared cancellation token — owned by the caller so watcher/IPC tasks
+    /// are cancelled via the same signal as the monitors.
+    cancel: CancellationToken,
 }
 
 impl Engine {
-    pub fn new(config: Arc<RwLock<Config>>, config_changed_rx: watch::Receiver<()>) -> Self {
+    pub fn new(
+        config:            Arc<RwLock<Config>>,
+        config_changed_rx: watch::Receiver<()>,
+        cancel:            CancellationToken,
+    ) -> Self {
         Self {
             config,
             monitors: Vec::new(),
             actions:  Vec::new(),
             config_changed_rx,
+            cancel,
         }
     }
 
@@ -42,7 +50,7 @@ impl Engine {
 
     pub async fn run(self) -> Result<()> {
         let (tx, _initial_rx) = new_event_bus(BUS_CAPACITY);
-        let cancel = CancellationToken::new();
+        let cancel = self.cancel;
         let actions = Arc::new(self.actions);
         let config  = self.config.clone();
 

@@ -34,8 +34,12 @@ pub async fn watch_config(
     let (notify_tx, mut notify_rx) =
         tokio::sync::mpsc::channel::<notify::Result<notify::Event>>(32);
 
+    // A std channel whose sender is dropped when the async loop exits — this
+    // signals the blocking thread to return rather than parking indefinitely,
+    // which would prevent the Tokio runtime from completing its shutdown.
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
+
     let path_clone = path.clone();
-    // Watcher must live on a blocking thread — dropping it cancels all watches.
     let _watcher_handle = tokio::task::spawn_blocking(move || {
         let tx = notify_tx.clone();
         let mut watcher = match RecommendedWatcher::new(
@@ -53,9 +57,9 @@ pub async fn watch_config(
             return;
         }
         tracing::debug!("config watcher: watching {:?}", path_clone);
-        // Park until the runtime drops the handle (cancel triggers the main task
-        // to exit, which drops _watcher_handle, which ends spawn_blocking).
-        std::thread::park();
+        // Block until shutdown_tx is dropped (on cancel) — then this thread exits
+        // cleanly and the runtime can finish shutting down.
+        let _ = shutdown_rx.recv();
     });
 
     loop {
@@ -81,5 +85,6 @@ pub async fn watch_config(
         }
     }
 
+    drop(shutdown_tx); // unblocks the watcher thread so it can exit
     Ok(())
 }

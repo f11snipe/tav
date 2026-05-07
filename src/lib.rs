@@ -68,11 +68,10 @@ async fn run_impl(config_file: &Path, socket_path: Option<&Path>) -> Result<()> 
     let changed_tx = Arc::new(changed_tx_inner);
     let cancel = CancellationToken::new();
 
-    let watcher_cancel = cancel.clone();
     tokio::spawn(watch_config(
         config_file.to_path_buf(),
         shared.clone(),
-        watcher_cancel,
+        cancel.clone(),
         changed_tx.clone(),
     ));
 
@@ -137,9 +136,8 @@ async fn run_impl(config_file: &Path, socket_path: Option<&Path>) -> Result<()> 
         let ipc_shared = shared.clone();
         let ipc_config = config_file.to_path_buf();
         let ipc_sock   = sock.to_path_buf();
-        let ipc_cancel = cancel.clone();
         let ipc_reload = changed_tx.clone();
-        tokio::spawn(ipc_server(ipc_sock, ipc_shared, ipc_config, ipc_reload, ipc_cancel, started_at));
+        tokio::spawn(ipc_server(ipc_sock, ipc_shared, ipc_config, ipc_reload, cancel.clone(), started_at));
 
         // SIGHUP → config reload (Unix only)
         #[cfg(unix)]
@@ -164,7 +162,7 @@ async fn run_impl(config_file: &Path, socket_path: Option<&Path>) -> Result<()> 
         }
     }
 
-    let engine = Engine::new(shared, changed_rx)
+    let engine = Engine::new(shared, changed_rx, cancel)
         .add_monitor(FilesystemMonitor::new(hash_checker, script_detector, yara_detector))
         .add_monitor(ProcessMonitor)
         .add_monitor(PortMonitor::new(blocked_ips))

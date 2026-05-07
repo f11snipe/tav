@@ -66,6 +66,7 @@ impl Monitor for FilesystemMonitor {
         // ── Continuous notify watcher ────────────────────────────────────────
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel(128);
         let watchlist_clone = watchlist.clone();
+        let (fs_shutdown_tx, fs_shutdown_rx) = std::sync::mpsc::channel::<()>();
         let _watcher_handle = tokio::task::spawn_blocking(move || {
             let tx = notify_tx.clone();
             let mut watcher = match RecommendedWatcher::new(
@@ -81,7 +82,7 @@ impl Monitor for FilesystemMonitor {
                 }
             }
             tracing::info!("filesystem: watching {} dirs", watchlist_clone.len());
-            std::thread::park();
+            let _ = fs_shutdown_rx.recv(); // returns when sender is dropped on cancel
         });
 
         let mut config_changed = ctx.config_changed.clone();
@@ -90,6 +91,7 @@ impl Monitor for FilesystemMonitor {
             tokio::select! {
                 _ = ctx.cancel.cancelled() => {
                     tracing::info!("filesystem monitor: shutting down");
+                    drop(fs_shutdown_tx);
                     break;
                 }
                 Ok(()) = config_changed.changed() => {
