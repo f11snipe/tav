@@ -139,6 +139,9 @@ fn resolve_policy(cfg: &Config, monitor: &str) -> Vec<ActionName> {
         "processes" => {
             cfg.resolve_policy(cfg.processes.policy.as_ref(), &default)
         }
+        "processes/watch" => {
+            cfg.resolve_policy(cfg.processes.policy.as_ref(), &default)
+        }
         "network/ports" => {
             cfg.resolve_policy(cfg.ports.policy.as_ref(), &default)
         }
@@ -164,6 +167,8 @@ fn default_policy_for(monitor: &str) -> Vec<ActionName> {
             => vec![ActionName::Quarantine, ActionName::Alert],
         "processes"
             => vec![ActionName::Kill, ActionName::Alert],
+        "processes/watch"
+            => vec![ActionName::Alert],
         "network/ports" | "network/dns"
         | "network/pcap"
         | "network/pcap/dns" | "network/pcap/tls" | "network/pcap/http"
