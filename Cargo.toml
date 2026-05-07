@@ -62,4 +62,4 @@ optional = true
 
 [target.'cfg(unix)'.dependencies.nix]
 version = "0.28"
-features = ["process", "signal", "fs"]
+features = ["process", "signal", "fs", "user"]

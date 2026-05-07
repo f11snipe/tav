@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
-use sysinfo::{Process, System, Users};
+use sysinfo::{Process, System};
 use crate::detectors::RuleSet;
 use crate::engine::event::{Severity, Subject, ThreatEvent};
 use super::{Monitor, MonitorContext};
@@ -67,14 +67,13 @@ fn scan_processes(
 ) -> Vec<ThreatEvent> {
     let mut sys = System::new_all();
     sys.refresh_all();
-    let users  = Users::new_with_refreshed_list();
     let mut events = Vec::new();
 
     for (_pid, process) in sys.processes() {
         let pid  = process.pid().as_u32();
         let name = process.name().to_string();
         let cmd  = process.cmd().join(" ");
-        let user = get_user(process, &users);
+        let user = get_user(process);
 
         // ── Watch list: emit warn-level event, deduped ───────────────────────
         for pattern in watchlist {
@@ -161,10 +160,18 @@ fn blacklist_match<'a>(process: &Process, rules: &'a RuleSet) -> Option<&'a str>
         .or_else(|| rules.first_match(&name))
 }
 
-fn get_user(process: &Process, users: &Users) -> Option<String> {
-    let uid  = process.effective_user_id()?;
-    let user = users.get_user_by_id(uid)?;
-    Some(user.name().to_string())
+fn get_user(process: &Process) -> Option<String> {
+    let uid = process.effective_user_id()?;
+    #[cfg(unix)]
+    {
+        use nix::unistd::{Uid, User};
+        User::from_uid(Uid::from_raw(**uid))
+            .ok()
+            .flatten()
+            .map(|u| u.name)
+    }
+    #[cfg(not(unix))]
+    { None }
 }
 
 async fn read_config(

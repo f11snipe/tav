@@ -31,7 +31,7 @@ filesystem:
 
   # ── File hash checking ────────────────────────────────────────────────────
   hashes:
-    enabled: false
+    enabled: true
     block_list: ~/.tav/hashes/blocklist.txt   # SHA-256 hex, one per line
     allow_list: ~/.tav/hashes/allowlist.txt
     virustotal:
@@ -48,7 +48,7 @@ filesystem:
 
   # ── Script content analysis ───────────────────────────────────────────────
   scripts:
-    enabled: false
+    enabled: true
     policy: strict                # overrides filesystem.policy for script hits
     max_size_mb: 10
     extensions: [sh, py, ps1, js, rb, php, pl]
@@ -63,7 +63,7 @@ filesystem:
         regex:    '/dev/tcp/'
         severity: critical
       - name:     eval_chain
-        regex:    'eval\s*\(.*eval'
+        regex:    'eval\s*\(.*\)'
         severity: high
 
 # ── Process monitor ────────────────────────────────────────────────────────────
@@ -84,15 +84,19 @@ processes:
 
   # Kill specific binaries when run by specific users
   prohibit:
-    www-data:
+    daemon:
+      - sh
       - /bin/sh
+      - /usr/bin/sh
+      - bash
       - /bin/bash
+      - /usr/bin/bash
 
 # ── Port/socket monitor ────────────────────────────────────────────────────────
 ports:
-  enabled: false
+  enabled: true
   policy: notify_only
-  poll_ms: 5000
+  poll_ms: 2000
 
   # Ports expected to be listening; alert on anything else.
   # Leave empty to disable the unexpected-listener check.
@@ -100,7 +104,7 @@ ports:
 
   # CIDR ranges blocked as outbound connection destinations
   block_destinations:
-    - 192.168.0.0/16              # example: flag internal pivoting
+    - 192.168.69.0/24              # example: flag internal pivoting
 
   # Alert when named processes open specific socket types
   process_rules:
@@ -108,10 +112,12 @@ ports:
       alert_on: any_listen        # any_listen | any_connect
     - name:     ncat
       alert_on: any_listen
+    - name:     netcat
+      alert_on: any_listen
 
 # ── Threat intelligence ────────────────────────────────────────────────────────
 intel:
-  auto_update: false            # pull feeds on startup if stale
+  auto_update: true            # pull feeds on startup if stale
   update_interval_hours: 24
 
   # Run `tav intel update -c conf/config.yaml` to fetch these feeds manually.
@@ -119,7 +125,7 @@ intel:
     - name:      feodo_tracker
       url:       https://feodotracker.abuse.ch/downloads/ipblocklist.txt
       feed_type: ip
-      enabled:   false          # set to true to enable
+      enabled:   true          # set to true to enable
 
     - name:      malware_bazaar
       url:       https://bazaar.abuse.ch/export/txt/sha256/full/
@@ -129,12 +135,12 @@ intel:
     - name:      stevenblack_hosts
       url:       https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
       feed_type: domain
-      enabled:   false
+      enabled:   true
 
     - name:      urlhaus_domains
       url:       https://urlhaus.abuse.ch/downloads/text/
       feed_type: domain
-      enabled:   false
+      enabled:   true
 
 # ── Live PCAP monitor (requires `--features pcap` build + root) ───────────────
 pcap:

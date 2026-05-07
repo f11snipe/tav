@@ -148,7 +148,8 @@ fn resolve_policy(cfg: &Config, monitor: &str) -> Vec<ActionName> {
             cfg.resolve_policy(cfg.processes.policy.as_ref(), &default)
         }
         "processes/watch" => {
-            cfg.resolve_policy(cfg.processes.policy.as_ref(), &default)
+            // Observation-only; never inherit processes.policy (which may include Kill)
+            default
         }
         "network/ports" => {
             cfg.resolve_policy(cfg.ports.policy.as_ref(), &default)

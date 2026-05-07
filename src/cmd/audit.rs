@@ -79,9 +79,9 @@ pub fn run(
     let content = std::fs::read_to_string(&log_path)?;
     let mut count = 0;
 
-    println!("{:<38}  {:<12}  {:<12}  {:<12}  {:<30}  {}",
+    println!("{:<38}  {:<12}  {:<20}  {:<10}  {:<30}  {}",
         "ID", "TIME", "MONITOR", "SEVERITY", "ACTION", "RULE");
-    println!("{}", "─".repeat(130));
+    println!("{}", "─".repeat(140));
 
     for line in content.lines().rev() {
         if count >= limit { break; }
@@ -103,7 +103,7 @@ pub fn run(
             .unwrap_or_else(|| "—".to_string());
 
         println!(
-            "{:<38}  {:<12}  {:<12}  {:<12}  {:<30}  {}",
+            "{:<38}  {:<12}  {:<20}  {:<10}  {:<30}  {}",
             event.id,
             event.timestamp.format("%H:%M:%S"),
             event.monitor,

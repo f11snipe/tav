@@ -49,7 +49,10 @@ pub mod tui {
         if log_path.exists() {
             let content = std::fs::read_to_string(&log_path).unwrap_or_default();
             let mut locked = state.lock().unwrap();
-            for line in content.lines().rev().take(50) {
+            // Collect the newest 50 lines, then process oldest-first so push_front
+            // leaves the newest at the head of the deque.
+            let lines: Vec<&str> = content.lines().rev().take(50).collect();
+            for line in lines.into_iter().rev() {
                 if let Ok(event) = serde_json::from_str::<ThreatEvent>(line) {
                     push_event(&mut locked, event);
                 }
