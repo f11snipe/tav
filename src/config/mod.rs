@@ -91,21 +91,28 @@ pub struct GlobalConfig {
     /// Suppress repeat events for the same subject within this window (seconds).
     #[serde(default = "default_dedup_secs")]
     pub dedup_secs: u64,
+
+    /// Hard upper limit on file size for any content scan.
+    /// Files larger than this are skipped before per-detector limits are checked (MB).
+    #[serde(default = "default_max_scan_size_mb")]
+    pub max_scan_size_mb: u64,
 }
 
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
-            quarantine_dir: default_quarantine_dir(),
-            audit_log:      default_audit_log(),
-            dedup_secs:     default_dedup_secs(),
+            quarantine_dir:   default_quarantine_dir(),
+            audit_log:        default_audit_log(),
+            dedup_secs:       default_dedup_secs(),
+            max_scan_size_mb: default_max_scan_size_mb(),
         }
     }
 }
 
-fn default_quarantine_dir() -> String { "~/.tav/quarantine".into() }
-fn default_audit_log()      -> String { "~/.tav/audit.jsonl".into() }
-fn default_dedup_secs()     -> u64    { 30 }
+fn default_quarantine_dir()   -> String { "~/.tav/quarantine".into() }
+fn default_audit_log()        -> String { "~/.tav/audit.jsonl".into() }
+fn default_dedup_secs()       -> u64    { 30 }
+fn default_max_scan_size_mb() -> u64    { 100 }
 
 // ── Filesystem monitor ────────────────────────────────────────────────────────
 
@@ -584,6 +591,7 @@ mod tests {
         assert!(!cfg.ports.enabled);
         assert!(!cfg.dns.enabled);
         assert_eq!(cfg.global.dedup_secs, 30);
+        assert_eq!(cfg.global.max_scan_size_mb, 100);
         assert_eq!(cfg.global.quarantine_dir, "~/.tav/quarantine");
     }
 

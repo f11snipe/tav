@@ -1,8 +1,9 @@
 # ── Global settings ────────────────────────────────────────────────────────────
 global:
-  quarantine_dir: ~/.tav/quarantine
-  audit_log:      ~/.tav/audit.jsonl
-  dedup_secs:     30              # suppress repeat events for the same subject
+  quarantine_dir:   ~/.tav/quarantine
+  audit_log:        ~/.tav/audit.jsonl
+  dedup_secs:       30            # suppress repeat events for the same subject
+  max_scan_size_mb: 100           # hard cap: skip content scan on files larger than this (MB)
 
 # ── Named action policies ──────────────────────────────────────────────────────
 # Optional. Any monitor `policy:` field accepts either a name from this map
@@ -41,7 +42,7 @@ filesystem:
 
   # ── YARA rule scanning (requires `--features yara` build) ───────────────
   yara:
-    enabled: false
+    enabled: true
     rules_dir: ~/.tav/rules/yara   # place .yar / .yara files here
     max_size_mb: 50
     # policy: strict               # overrides filesystem.policy for YARA hits

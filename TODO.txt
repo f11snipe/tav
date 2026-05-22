@@ -1,0 +1,1 @@
+missed alert, wrote curl|bash to oop.sh, 2 was caught

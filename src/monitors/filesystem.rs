@@ -46,21 +46,61 @@ impl Monitor for FilesystemMonitor {
             return Ok(());
         }
 
+        // Snapshot config values for the initial walk content scan
+        let (walk_script_en, walk_max_bytes, walk_yara_en, walk_yara_bytes, global_max_bytes) = {
+            let cfg = ctx.config.read().await;
+            (
+                cfg.filesystem.scripts.enabled && !script_det.is_empty(),
+                cfg.filesystem.scripts.max_size_mb * 1024 * 1024,
+                cfg.filesystem.yara.enabled && yara_det.is_some(),
+                cfg.filesystem.yara.max_size_mb * 1024 * 1024,
+                cfg.global.max_scan_size_mb * 1024 * 1024,
+            )
+        };
+
         // ── Initial walk ─────────────────────────────────────────────────────
         for dir in &watchlist {
+            // Filename-rule walk (sync/blocking, no dedup — dedup is for the notify loop only)
             let dir_clone    = dir.clone();
             let rules_clone  = ruleset.clone();
             let tx_clone     = ctx.tx.clone();
-            let dedup_clone  = dedup.clone();
             let hc_clone     = hash_checker.clone();
-            let sd_clone     = script_det.clone();
             let hash_enabled = !hc_clone.is_empty();
             tokio::task::spawn_blocking(move || {
                 tracing::info!("filesystem: walking {}", dir_clone);
-                walk_dir(&dir_clone, &rules_clone, &tx_clone, &dedup_clone, dedup_ttl, &hc_clone, hash_enabled);
+                walk_dir(&dir_clone, &rules_clone, &tx_clone, &hc_clone, hash_enabled);
             });
-            // Content scan on walk is async; the notify loop handles it for new/modified files.
-            let _ = (sd_clone, ); // suppress unused warning; used in notify loop below
+
+            // Content scan walk (async): collect paths in blocking context, scan async.
+            // This runs independently of the notify loop so the dedup cache stays clean
+            // and notify events for the same files are never silently dropped.
+            if walk_script_en || walk_yara_en {
+                let dir_scan = dir.clone();
+                let sd_scan  = script_det.clone();
+                let yd_scan  = yara_det.clone();
+                let tx_scan  = ctx.tx.clone();
+                tokio::spawn(async move {
+                    let paths = tokio::task::spawn_blocking(move || {
+                        WalkDir::new(&dir_scan)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.file_type().is_file())
+                            .map(|e| e.into_path())
+                            .collect::<Vec<_>>()
+                    }).await.unwrap_or_default();
+                    tracing::info!("filesystem: content-scanning {} files in walk", paths.len());
+                    for path in paths {
+                        if walk_script_en {
+                            scan_content(&path, sd_scan.as_ref(), &tx_scan, walk_max_bytes, global_max_bytes, "filesystem/script").await;
+                        }
+                        if walk_yara_en {
+                            if let Some(yd) = yd_scan.as_deref() {
+                                scan_content(&path, yd, &tx_scan, walk_yara_bytes, global_max_bytes, "filesystem/yara").await;
+                            }
+                        }
+                    }
+                });
+            }
         }
 
         // ── Continuous notify watcher ────────────────────────────────────────
@@ -150,14 +190,15 @@ async fn process_path(
     let key = path.to_string_lossy().to_string();
     if is_duplicate(dedup, &key, Duration::from_secs(dedup_ttl)) { return; }
 
-    let (hash_enabled, script_enabled, max_bytes, yara_enabled, yara_max_bytes) = {
+    let (hash_enabled, script_enabled, max_bytes, yara_enabled, yara_max_bytes, global_max_bytes) = {
         let cfg  = ctx.config.read().await;
         let he   = cfg.filesystem.hashes.enabled && !hc.is_empty();
         let se   = cfg.filesystem.scripts.enabled && !sd.is_empty();
         let mb   = cfg.filesystem.scripts.max_size_mb * 1024 * 1024;
         let ye   = cfg.filesystem.yara.enabled && yd.is_some();
         let ymb  = cfg.filesystem.yara.max_size_mb * 1024 * 1024;
-        (he, se, mb, ye, ymb)
+        let gmb  = cfg.global.max_scan_size_mb * 1024 * 1024;
+        (he, se, mb, ye, ymb, gmb)
     };
 
     // ── 1. Filename regex match ──────────────────────────────────────────────
@@ -183,13 +224,13 @@ async fn process_path(
 
     // ── 3. Script content scan ───────────────────────────────────────────────
     if script_enabled {
-        scan_content(path, sd, &ctx.tx, max_bytes, "filesystem/script").await;
+        scan_content(path, sd, &ctx.tx, max_bytes, global_max_bytes, "filesystem/script").await;
     }
 
     // ── 4. YARA scan ─────────────────────────────────────────────────────────
     if yara_enabled {
         if let Some(yd) = yd {
-            scan_content(path, yd, &ctx.tx, yara_max_bytes, "filesystem/yara").await;
+            scan_content(path, yd, &ctx.tx, yara_max_bytes, global_max_bytes, "filesystem/yara").await;
         }
     }
 }
@@ -197,11 +238,12 @@ async fn process_path(
 /// Scan a single file with a content detector and emit events.
 /// If `detector.extensions()` is empty, all file types are scanned.
 async fn scan_content(
-    path:         &Path,
-    detector:     &dyn ContentDetector,
-    tx:           &EventSender,
-    max_bytes:    u64,
-    monitor_name: &str,
+    path:             &Path,
+    detector:         &dyn ContentDetector,
+    tx:               &EventSender,
+    max_bytes:        u64,
+    global_max_bytes: u64,
+    monitor_name:     &str,
 ) {
     let ext  = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let exts = detector.extensions();
@@ -209,7 +251,9 @@ async fn scan_content(
     if !exts.is_empty() && !exts.iter().any(|e| e == ext) { return; }
 
     let Ok(meta) = tokio::fs::metadata(path).await else { return };
-    if meta.len() > max_bytes { return; }
+    let file_size = meta.len();
+    if file_size > global_max_bytes { return; }
+    if file_size > max_bytes { return; }
 
     let Ok(bytes) = tokio::fs::read(path).await else { return };
     let content = String::from_utf8_lossy(&bytes);
@@ -225,16 +269,12 @@ fn walk_dir(
     dir:          &str,
     rules:        &RuleSet,
     tx:           &EventSender,
-    dedup:        &DashMap<String, Instant>,
-    dedup_ttl:    u64,
     _hc:          &HashChecker,
     hash_enabled: bool,
 ) {
     for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         let key  = path.to_string_lossy().to_string();
-        if is_duplicate(dedup, &key, Duration::from_secs(dedup_ttl)) { continue; }
-
         if let Some(rule) = rules.first_match(&key) {
             let hash = if hash_enabled { stream_sha256_sync(path).ok() } else { None };
             emit_event(tx, "filesystem", Severity::High,
